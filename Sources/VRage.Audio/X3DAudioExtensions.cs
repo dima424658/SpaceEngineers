@@ -1,27 +1,11 @@
-﻿using SharpDX.XAudio2;
-using System;
-using VRage.Data.Audio;
-using VRage.Native;
+﻿using VRage.Data.Audio;
 using VRageMath;
-using System.Diagnostics;
+using SharpDX.X3DAudio;
 
 namespace VRage.Audio.X3DAudio
 {
     public static class X3DAudioExtensions
     {
-        internal static IntPtr ToPointer(this ChannelAzimuts channelAzimuths)
-        {
-            return channelAzimuths != null ? channelAzimuths.Data : IntPtr.Zero;
-        }
-
-        internal static IntPtr ToPointer(this DistanceCurve distanceCurve)
-        {
-            unsafe
-            {
-                return distanceCurve != null ? new IntPtr(distanceCurve.DataPointer) : IntPtr.Zero;
-            }
-        }
-
         /// <summary>
         /// Sets default values for emitter, makes it valid
         /// </summary>
@@ -60,7 +44,7 @@ namespace VRage.Audio.X3DAudio
             float maxDistance = customMaxDistance.HasValue ? customMaxDistance.Value : cue.MaxDistance;
             emitter.DopplerScaler = 1f;
             emitter.CurveDistanceScaler = maxDistance;
-            emitter.VolumeCurve = MyDistanceCurves.Curves[(int)cue.VolumeCurve];
+            emitter.VolumeCurve = MyDistanceCurves.Curves[(int)cue.VolumeCurve].Points;
 
             emitter.InnerRadius = (channelsCount > 2) ? maxDistance : 0f;
             emitter.InnerRadiusAngle = (channelsCount > 2) ? 0.5f * SharpDX.AngleSingle.RightAngle.Radians : 0f;
@@ -73,25 +57,10 @@ namespace VRage.Audio.X3DAudio
 
             emitter.DopplerScaler = 1f;
             emitter.CurveDistanceScaler = maxDistance;
-            emitter.VolumeCurve = MyDistanceCurves.Curves[(int)volumeCurve];
+            emitter.VolumeCurve = MyDistanceCurves.Curves[(int)volumeCurve].Points;
 
             emitter.InnerRadius = (channelsCount > 2) ? maxDistance : 0f;
             emitter.InnerRadiusAngle = (channelsCount > 2) ? 0.5f * SharpDX.AngleSingle.RightAngle.Radians : 0f;
         }
-
-#if !XB1
-        internal static unsafe void SetOutputMatrix(this SourceVoice sourceVoice, Voice destionationVoice, int sourceChannels, int destinationChannels, float* matrix, int operationSet = 0)
-        {
-#if UNSHARPER
-			Debug.Assert(false);
-			return;
-#else
-            IntPtr destPtr = destionationVoice != null ? destionationVoice.NativePointer : IntPtr.Zero;
-            int result = NativeCall<int>.Method<IntPtr, uint, uint, IntPtr, uint>(sourceVoice.NativePointer, 16, destPtr, (uint)sourceChannels, (uint)destinationChannels, new IntPtr(matrix), (uint)operationSet);
-            ((SharpDX.Result)result).CheckError();
-#endif
-        }
-#endif // !XB1
-
     }
 }

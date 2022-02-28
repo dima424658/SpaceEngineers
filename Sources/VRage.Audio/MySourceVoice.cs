@@ -1,346 +1,392 @@
 ﻿using SharpDX;
 using SharpDX.Multimedia;
 using SharpDX.XAudio2;
-using System;
-using System.Collections.Generic;
-using System.Diagnostics;
 using VRage.Data.Audio;
 using VRage.Utils;
 
 namespace VRage.Audio
 {
-    public static class VoiceExtensions
+    internal class MySourceVoice : IMySourceVoice
     {
-        public static bool IsValid(this SourceVoice self)
-        {
-            return !self.IsDisposed && self.NativePointer != IntPtr.Zero;
-        }
-    }
-
-    class MySourceVoice : IMySourceVoice
-    {
-        public Action StoppedPlaying { get; set; }
-        MySourceVoicePool m_owner;
-        SourceVoice m_voice;
-        MyCueId m_cueId;
-        MyInMemoryWave[] m_loopBuffers = new MyInMemoryWave[3];
-        float m_frequencyRatio = 1f;
-        VoiceSendDescriptor[] m_currentDescriptor;
-        Queue<DataStream> m_dataStreams;// = new Queue<DataStream>();
-
-        bool m_isPlaying;
-        bool m_isPaused;
-        bool m_isLoopable;
-        static private readonly object theLock = new Object();
+        private MySourceVoicePool m_owner;
+        private SourceVoice m_voice;
+        private MyCueId m_cueId;
+        private MyInMemoryWave[] m_loopBuffers = new MyInMemoryWave[3];
+        private float m_frequencyRatio = 1f;
+        private VoiceSendDescriptor[] m_currentDescriptor;
+        private Queue<DataStream> m_dataStreams;
+        private XAudio2 m_device;
+        private bool m_isPlaying;
+        private bool m_isPaused;
+        private bool m_isLoopable;
+        private int m_activeSourceBuffers;
         private bool m_valid;
         private bool m_buffered;
-        public float distanceToListener = float.MaxValue;
+        private float m_volumeBase = 1f;
+        private float m_volumeMultiplier = 1f;
+        public string DebugData;
+        public IMy3DSoundEmitter Emitter;
 
-        public SourceVoice Voice { get { return m_voice; } }
-        public MyCueId CueEnum { get { return m_cueId; } }
-        public bool IsPlaying { get { return m_isPlaying; } }
-        public bool IsPaused { get { return m_isPaused; } }
-        public bool IsLoopable { get { return m_isLoopable; } }
-        public bool IsValid { get { return m_valid && m_voice != null && m_voice.IsValid(); } }
-        public MySourceVoicePool Owner { get { return m_owner; } }
+        public Action<IMySourceVoice> StoppedPlaying { get; set; }
+
+        public float DistanceToListener { get; set; }
+
+        public SourceVoice Voice => this.m_voice;
+
+        public MyCueId CueEnum => this.m_cueId;
+
+        public bool IsPlaying => this.m_isPlaying;
+
+        public bool IsPaused => this.m_isPaused;
+
+        public bool IsLoopable => this.m_isLoopable;
+
+        public bool IsValid => this.m_valid && this.IsNativeValid;
+
+        public bool IsNativeValid => this.m_voice != null && this.m_voice.IsValid() && this.m_device != null && !this.m_device.IsDisposed && this.m_device.NativePointer != IntPtr.Zero;
+
+        public MySourceVoicePool Owner => this.m_owner;
+
+        public VoiceSendDescriptor[] CurrentOutputVoices => this.m_currentDescriptor;
+
         public float FrequencyRatio
         {
-            get 
-            {
-                return m_frequencyRatio;
-            }
+            get => this.m_frequencyRatio;
             set
-            { 
-                m_frequencyRatio = value;
-                MySoundData soundData = MyAudio.Static.GetCue(m_cueId);
-                if (soundData != null && soundData.DisablePitchEffects)
+            {
+                this.m_frequencyRatio = value;
+                if (!this.IsValid)
                     return;
-                if (m_voice != null && m_voice.IsValid()){
-                    try
-                    {
-                        VoiceState state = m_voice.State;//this sometimes fails - not sure why since we already check for null and IsValid
-                        if (state.BuffersQueued > 0)
-                            m_voice.SetFrequencyRatio(FrequencyRatio);
-                    }
-                    catch (NullReferenceException)
-                    {
-                    }
+                MySoundData cue = MyAudio.Static.GetCue(this.m_cueId);
+                if (cue != null && cue.DisablePitchEffects)
+                    return;
+                try
+                {
+                    if (this.m_voice.State.BuffersQueued <= 0)
+                        return;
+                    this.m_voice.SetFrequencyRatio(this.FrequencyRatio);
+                }
+                catch (NullReferenceException ex)
+                {
                 }
             }
         }
-        private float m_volumeBase = 1f;
-        public float Volume { get { return IsValid ? m_volumeBase : 0; } }
-        private float m_volumeMultiplier = 1f;
+
+        public float Volume => !this.IsValid ? 0.0f : this.m_volumeBase;
+
         public float VolumeMultiplier
-        { 
-            get { return IsValid ? m_volumeMultiplier : 1f; }
-            set 
+        {
+            get => !this.IsValid ? 1f : this.m_volumeMultiplier;
+            set
             {
-                m_volumeMultiplier = value;
-                SetVolume(m_volumeBase);
-            } 
+                this.m_volumeMultiplier = value;
+                this.SetVolume(this.m_volumeBase);
+            }
         }
-        public bool Silent = false;
-        public bool IsBuffered { get { return m_buffered; } }
 
-        public MySourceVoice(XAudio2 device, WaveFormat sourceFormat)
+        public bool Silent { get; set; }
+
+        public bool IsBuffered => this.m_buffered;
+
+        public MySourceVoice(SharpDX.XAudio2.XAudio2 device, WaveFormat sourceFormat)
         {
-            m_voice = new SourceVoice(device, sourceFormat, true);
-            m_voice.BufferEnd += OnStopPlayingBuffered;
-            m_valid = true;
-            m_dataStreams = new Queue<DataStream>();
-
-            Flush();
+            this.m_device = device;
+            device.Disposing += new EventHandler<EventArgs>(this.OnDeviceDisposing);
+            device.CriticalError += new EventHandler<ErrorEventArgs>(this.OnDeviceCrashed);
+            this.m_voice = new SourceVoice(device, sourceFormat, true);
+            this.m_voice.BufferEnd += new Action<IntPtr>(this.OnStopPlayingBuffered);
+            this.m_valid = true;
+            this.m_dataStreams = new Queue<DataStream>();
+            this.DistanceToListener = float.MaxValue;
+            this.Flush();
         }
 
-        public MySourceVoice(MySourceVoicePool owner, XAudio2 device, WaveFormat sourceFormat)
+        public MySourceVoice(MySourceVoicePool owner, SharpDX.XAudio2.XAudio2 device, WaveFormat sourceFormat)
         {
-            // This value influences how many native memory is allocated in XAudio
-            // When shifting sound to higher frequency it needs more data, because it's compressed in time
-            // Ratio 2 equals to 11 or 12 semitones (=1 octave)
-            // Values around 32 should be pretty safe
-            // Values around 128 needs large amount of memory
-            // Values > 128 are memory killer
-            const float MaxFrequencyRatio = 2;
-
-            m_voice = new SourceVoice(device, sourceFormat, VoiceFlags.UseFilter, MaxFrequencyRatio, true);
-            m_voice.BufferEnd += OnStopPlaying;
-            m_valid = true;
-
-            m_owner = owner;
-            m_owner.OnAudioEngineChanged += m_owner_OnAudioEngineChanged;
-            Flush();
+            this.m_device = device;
+            this.m_voice = new SourceVoice(device, sourceFormat, VoiceFlags.UseFilter, 2f, true);
+            this.m_voice.BufferEnd += new Action<IntPtr>(this.OnStopPlaying);
+            this.m_valid = true;
+            this.m_owner = owner;
+            this.m_owner.OnAudioEngineChanged += new AudioEngineChanged(this.m_owner_OnAudioEngineChanged);
+            this.DistanceToListener = float.MaxValue;
+            this.Flush();
         }
 
-        void m_owner_OnAudioEngineChanged()
+        private void OnDeviceDisposing(object sender, EventArgs eventArgs) => this.Destroy();
+
+        private void OnDeviceCrashed(object sender, ErrorEventArgs errorEventArgs)
         {
-            m_valid = false;
+            this.m_valid = false;
+            this.m_device = (SharpDX.XAudio2.XAudio2)null;
         }
+
+        private void m_owner_OnAudioEngineChanged() => this.m_valid = false;
 
         public void Flush()
         {
-            m_cueId = new MyCueId(MyStringHash.NullOrEmpty);
-            m_voice.Stop();
-            m_voice.FlushSourceBuffers();
-            DisposeWaves();
+            this.m_cueId = new MyCueId(MyStringHash.NullOrEmpty);
+            this.DisposeWaves();
+            this.m_isPlaying = false;
+            this.m_isPaused = false;
+            this.m_isLoopable = false;
+        }
 
-            m_isPlaying = false;
-            m_isPaused = false;
-            m_isLoopable = false;
-            m_currentDescriptor = null;
+        public int GetOutputChannels()
+        {
+            if (this.m_loopBuffers == null)
+                return -1;
+            int? nullable = new int?();
+            foreach (MyInMemoryWave loopBuffer in this.m_loopBuffers)
+            {
+                if (loopBuffer != null)
+                {
+                    int channels = loopBuffer.WaveFormat.Channels;
+                    if (!nullable.HasValue)
+                        nullable = new int?(channels);
+                }
+            }
+            return nullable ?? 1;
         }
 
         internal void SubmitSourceBuffer(MyCueId cueId, MyInMemoryWave wave, MyCueBank.CuePart part)
         {
-            m_loopBuffers[(int)part] = wave;
-            m_cueId = cueId;
-            m_isLoopable |= (wave.Buffer.LoopCount > 0);
+            this.m_loopBuffers[(int)part] = wave;
+            this.m_cueId = cueId;
+            this.m_isLoopable |= wave.Buffer.LoopCount > 0;
         }
 
         private void SubmitSourceBuffer(MyInMemoryWave wave)
         {
             if (wave == null)
                 return;
-            m_isLoopable |= (wave.Buffer.LoopCount > 0);
-            m_voice.SourceSampleRate = wave.WaveFormat.SampleRate;
-            m_voice.SubmitSourceBuffer(wave.Buffer, wave.Stream.DecodedPacketsInfo);
+            AudioBuffer buffer = wave.Buffer;
+            int loopCount = buffer.LoopCount;
+            this.m_isLoopable |= buffer.LoopCount > 0;
+            try
+            {
+                if (this.m_activeSourceBuffers == 0)
+                    this.m_voice.SourceSampleRate = wave.WaveFormat.SampleRate;
+            }
+            catch (SharpDXException ex)
+            {
+            }
+            ++this.m_activeSourceBuffers;
+            this.m_voice.SubmitSourceBuffer(buffer, wave.Stream.DecodedPacketsInfo);
         }
 
         public void Start(bool skipIntro, bool skipToEnd = false)
         {
+            if (!this.IsValid)
+                return;
             if (!skipIntro)
-                SubmitSourceBuffer(m_loopBuffers[(int)MyCueBank.CuePart.Start]);
-
-            if (m_isLoopable || skipToEnd)
+                this.SubmitSourceBuffer(this.m_loopBuffers[0]);
+            if (this.m_isLoopable | skipToEnd)
             {
-                if(!skipToEnd)
-                    SubmitSourceBuffer(m_loopBuffers[(int)MyCueBank.CuePart.Loop]);
-                SubmitSourceBuffer(m_loopBuffers[(int)MyCueBank.CuePart.End]);
+                if (!skipToEnd)
+                    this.SubmitSourceBuffer(this.m_loopBuffers[1]);
+                this.SubmitSourceBuffer(this.m_loopBuffers[2]);
             }
-            if (m_voice.State.BuffersQueued > 0)
+            if (this.m_voice.State.BuffersQueued > 0)
             {
-                m_voice.SetFrequencyRatio(FrequencyRatio);
-                m_voice.Start();
-                m_isPlaying = true;
+                this.m_voice.SetFrequencyRatio(this.FrequencyRatio);
+                this.m_voice.Start();
+                this.m_isPlaying = true;
             }
             else
-                OnStopPlaying(m_voice.NativePointer);
+                this.OnAllBuffersFinished();
+        }
+
+        public int GetLengthInSeconds()
+        {
+            uint[] decodedPacketsInfo = this.m_loopBuffers[0].Stream.DecodedPacketsInfo;
+            int num1 = (int)decodedPacketsInfo[decodedPacketsInfo.Length - 1];
+            WaveFormat waveFormat = this.m_loopBuffers[0].WaveFormat;
+            int num2 = waveFormat.Channels * waveFormat.BitsPerSample / 8;
+            return num1 / num2 / waveFormat.SampleRate;
         }
 
         public void StartBuffered()
         {
-            if (m_voice.State.BuffersQueued > 0)
+            if (!this.IsValid)
+                return;
+            if (this.m_voice.State.BuffersQueued > 0)
             {
-                m_voice.SetFrequencyRatio(FrequencyRatio);
-                m_voice.Start();
-                m_isPlaying = true;
-                m_buffered = true;
+                this.m_voice.SetFrequencyRatio(this.FrequencyRatio);
+                this.m_voice.Start();
+                this.m_isPlaying = true;
+                this.m_buffered = true;
             }
             else
-                OnStopPlaying(m_voice.NativePointer);
+                this.OnAllBuffersFinished();
         }
 
-        public void SubmitBuffer(byte[] buffer, int size)
+        public void SubmitBuffer(byte[] buffer)
         {
-            Debug.Assert(m_dataStreams != null, "SourceVoice wasnt created with buffer support");
-            var dataStream = DataStream.Create(buffer, true, false);
-            AudioBuffer buff = new AudioBuffer(dataStream);
-            buff.Flags = BufferFlags.None;
-
-            m_dataStreams.Enqueue(dataStream);
-            m_voice.SubmitSourceBuffer(buff, null);
+            if (!this.IsValid || this.m_dataStreams == null || this.m_dataStreams.Count >= 62)
+                return;
+            DataStream stream = DataStream.Create<byte>(buffer, true, false);
+            AudioBuffer bufferRef = new AudioBuffer(stream);
+            bufferRef.Flags = BufferFlags.None;
+            lock (this.m_dataStreams)
+                this.m_dataStreams.Enqueue(stream);
+            try
+            {
+                this.m_voice.SubmitSourceBuffer(bufferRef, (uint[])null);
+            }
+            catch
+            {
+                MyLog.Default.WriteLine(string.Format("IsValid: {0} Buffers: {1} Buffer: {2} DataPtr: {3}", (object)this.IsValid, (object)this.m_dataStreams.Count, (object)buffer.Length, (object)bufferRef.AudioDataPointer));
+                throw;
+            }
         }
 
         private void OnStopPlayingBuffered(IntPtr context)
         {
-            Debug.Assert(m_dataStreams != null, "SourceVoice wasnt created with buffer support");
-            if (m_dataStreams.Count > 0)
+            if (this.m_dataStreams == null)
+                return;
+            lock (this.m_dataStreams)
             {
-                var dataStream = m_dataStreams.Dequeue();
-                dataStream.Dispose();
+                if (this.m_dataStreams.Count > 0)
+                    this.m_dataStreams.Dequeue().Dispose();
             }
-            OnStopPlaying(context);
+            if (this.m_dataStreams.Count != 0)
+                return;
+            this.OnAllBuffersFinished();
         }
 
         private void OnStopPlaying(IntPtr context)
         {
-            if (m_voice.State.BuffersQueued == 0)
-            {
-                m_buffered = false;
-                m_isPlaying = false;
-                if (m_owner != null)
-                    m_owner.OnStopPlaying(this);
-                if (StoppedPlaying != null)
-                    StoppedPlaying();
-            }
+            --this.m_activeSourceBuffers;
+            if (this.m_activeSourceBuffers != 0)
+                return;
+            this.OnAllBuffersFinished();
+        }
+
+        private void OnAllBuffersFinished()
+        {
+            this.m_isPlaying = false;
+            if (this.StoppedPlaying != null)
+                MyXAudio2.Instance.EnqueueStopPlayingCallback(this);
+            this.m_owner?.OnStopPlaying(this);
         }
 
         public void Stop(bool force = false)
         {
-            if (!IsValid || !m_isPlaying)
+            if (!this.IsValid || !this.m_isPlaying)
                 return;
-
-            if ((force || m_isLoopable) && m_owner != null)
-                m_owner.AddToFadeoutList(this);
+            if ((force || this.m_isLoopable) && this.m_owner != null)
+            {
+                this.m_owner.AddToFadeoutList(this);
+            }
             else
             {
-                m_voice.Stop();
-                m_voice.FlushSourceBuffers();
+                try
+                {
+                    this.m_voice.Stop();
+                    this.m_voice.FlushSourceBuffers();
+                }
+                catch (NullReferenceException ex)
+                {
+                }
             }
         }
 
         public void Pause()
         {
-            m_voice.Stop();
-            m_isPaused = true;
+            if (!this.IsValid)
+                return;
+            this.m_voice.Stop();
+            this.m_isPaused = true;
         }
 
         public void Resume()
         {
-            m_voice.FlushSourceBuffers();
-            if (m_isLoopable)
-            {
-                SubmitSourceBuffer(m_loopBuffers[(int)MyCueBank.CuePart.Loop]);
-                SubmitSourceBuffer(m_loopBuffers[(int)MyCueBank.CuePart.End]);
-            }
-            else
-                SubmitSourceBuffer(m_loopBuffers[(int)MyCueBank.CuePart.Start]);
-            m_voice.Start();
-            m_isPaused = false;
+            if (!this.IsValid)
+                return;
+            this.m_voice.Start();
+            this.m_isPaused = false;
         }
 
         public void SetVolume(float volume)
         {
-            m_volumeBase = volume;
-            if (IsValid)
+            this.m_volumeBase = volume;
+            if (!this.IsValid)
+                return;
+            try
             {
-                try
-                {
-                    m_voice.SetVolume(m_volumeBase * m_volumeMultiplier);
-                }
-                catch (NullReferenceException)
-                {
-                }
+                this.m_voice.SetVolume(this.m_volumeBase * this.m_volumeMultiplier);
+            }
+            catch (NullReferenceException ex)
+            {
             }
         }
 
         public void SetOutputVoices(VoiceSendDescriptor[] descriptors)
         {
-            if (m_currentDescriptor != descriptors)
-            {
-                m_voice.SetOutputVoices(descriptors);
-                m_currentDescriptor = descriptors;
-            }
+            if (!this.IsValid || this.m_currentDescriptor == descriptors)
+                return;
+            this.m_voice.SetOutputVoices(descriptors);
+            this.m_currentDescriptor = descriptors;
         }
 
-        public override string ToString()
-        {
-            return string.Format(m_cueId.ToString());
-        }
+        public override string ToString() => string.Format(this.m_cueId.ToString());
 
         public void Dispose()
         {
-            if (m_voice == null)
-                return;
-
-            DisposeWaves();
-            m_voice.DestroyVoice();
-            m_voice.Dispose();
-            m_voice = null;
+            this.m_valid = false;
+            if (this.IsNativeValid)
+            {
+                this.m_device.Disposing -= new EventHandler<EventArgs>(this.OnDeviceDisposing);
+                this.m_device.CriticalError -= new EventHandler<ErrorEventArgs>(this.OnDeviceCrashed);
+                this.m_voice.DestroyVoice();
+                this.m_voice.Dispose();
+                this.m_voice = (SourceVoice)null;
+                this.m_device = (SharpDX.XAudio2.XAudio2)null;
+            }
+            while (true)
+            {
+                Queue<DataStream> dataStreams = this.m_dataStreams;
+                // ISSUE: explicit non-virtual call
+                if ((dataStreams != null ? (__nonvirtual(dataStreams.Count) > 0 ? 1 : 0) : 0) != 0)
+                    this.m_dataStreams.Dequeue().Dispose();
+                else
+                    break;
+            }
+            this.DisposeWaves();
         }
 
         private void DisposeWaves()
         {
-            if (m_loopBuffers != null)
-                for (int i = 0; i < m_loopBuffers.Length; i++)
-                {
-                    if (m_loopBuffers[i] != null && m_loopBuffers[i].Streamed)
-                        m_loopBuffers[i].Dereference();
-                    m_loopBuffers[i] = null;
-                }
-        }
-
-        internal void DestroyVoice()
-        {
-            m_valid = false;
-            m_currentDescriptor = null;
-            StoppedPlaying = null;
-            m_owner = null;
-            m_loopBuffers = null;
-
-            DisposeWaves();
-
-            if (m_voice == null && m_dataStreams == null)
+            if (this.m_loopBuffers == null)
                 return;
-
-            lock (theLock)
+            for (int index = 0; index < this.m_loopBuffers.Length; ++index)
             {
-                if (m_voice != null && !m_voice.IsDisposed)
-                {
-                    if (m_voice.NativePointer != IntPtr.Zero)
-                    {
-                        if (IsValid)
-                            m_voice.Stop();
-                    }
-                    if (m_dataStreams != null)
-                        m_voice.BufferEnd -= OnStopPlayingBuffered;
-                    else
-                        m_voice.BufferEnd -= OnStopPlaying;
-                }
-
-                if (m_dataStreams != null)
-                {
-                    foreach (var dataStream in m_dataStreams)
-                        dataStream.Dispose();
-                    m_dataStreams.Clear();
-                }
-                m_dataStreams = null;
+                if (this.m_loopBuffers[index] != null && this.m_loopBuffers[index].Streamed)
+                    this.m_loopBuffers[index].Dereference();
+                this.m_loopBuffers[index] = (MyInMemoryWave)null;
             }
         }
 
-        public void Cleanup()
+        internal void CleanupBeforeDispose()
         {
-            DestroyVoice();
+            this.m_valid = false;
+            this.StoppedPlaying = (Action<IMySourceVoice>)null;
+            this.m_currentDescriptor = (VoiceSendDescriptor[])null;
+            if (this.m_owner != null)
+            {
+                this.m_owner.OnAudioEngineChanged -= new AudioEngineChanged(this.m_owner_OnAudioEngineChanged);
+                this.m_owner = (MySourceVoicePool)null;
+            }
+            if (this.IsNativeValid)
+                this.m_voice.Stop();
+            this.m_valid = false;
+        }
+
+        public void Destroy()
+        {
+            this.CleanupBeforeDispose();
+            this.Dispose();
         }
     }
 }

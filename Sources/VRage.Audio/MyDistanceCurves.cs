@@ -1,4 +1,4 @@
-﻿using VRage.Audio.X3DAudio;
+﻿using SharpDX.X3DAudio;
 
 namespace VRage.Audio
 {
@@ -48,5 +48,12 @@ namespace VRage.Audio
         );
 
         internal static DistanceCurve[] Curves = new DistanceCurve[] { CURVE_LINEAR, CURVE_QUADRATIC, CURVE_INVQUADRATIC, CURVE_CUSTOM_1 };
+    }
+
+    internal class DistanceCurve
+    {
+        public CurvePoint[] Points { get; set; }
+
+        public DistanceCurve(params CurvePoint[] points) => this.Points = points;
     }
 }

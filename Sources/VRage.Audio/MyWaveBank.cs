@@ -1,238 +1,157 @@
-﻿using System;
-using System.Collections.Generic;
-using System.IO;
+﻿using SharpDX.Multimedia;
 using VRage.Data.Audio;
 using VRage.FileSystem;
-using VRage.Library.Utils;
 
 namespace VRage.Audio
 {
     public class MyWaveBank : IDisposable
     {
-        Dictionary<string, MyInMemoryWave> m_waves = new Dictionary<string, MyInMemoryWave>();
+        private readonly Dictionary<string, MyInMemoryWave> m_waves = new Dictionary<string, MyInMemoryWave>();
+        internal readonly Dictionary<string, MyInMemoryWave> LoadedStreamedWaves = new Dictionary<string, MyInMemoryWave>();
 
-        public int Count { get { return m_waves.Count; } }
+        public int Count => m_waves.Count;
 
-        public bool Add(MySoundData cue, MyAudioWave cueWave)
+        private static bool FindAudioFile(MySoundData cue, string fileName, out string fsPath)
+        {
+            fsPath = Path.IsPathRooted(fileName) ? fileName : Path.Combine(MyFileSystem.ContentPath, "Audio", fileName);
+            var dirName = Path.GetDirectoryName(fsPath);
+
+            bool audioFile = MyFileSystem.FileExists(fsPath);
+            if (!audioFile && dirName != null)
+            {
+                string path = Path.Combine(dirName, Path.GetFileNameWithoutExtension(fsPath) + ".wav");
+                audioFile = MyFileSystem.FileExists(path);
+                if (audioFile)
+                    fsPath = path;
+            }
+
+            if (!audioFile)
+            {
+                MySoundErrorDelegate? onSoundError = MyAudio.OnSoundError;
+                if (onSoundError != null)
+                    onSoundError(cue, "Unable to find audio file: '" + cue.SubtypeId.ToString() + "', '" + fileName + "'");
+            }
+
+            return audioFile;
+        }
+
+        private static bool CheckWaveErrors(MySoundData cue, MyInMemoryWave wave, ref WaveFormatEncoding encoding, MySoundDimensions dim, string waveFileName)
+        {
+            bool flag = false;
+
+            if (encoding == WaveFormatEncoding.Unknown)
+                encoding = wave.WaveFormat.Encoding;
+
+            if (wave.WaveFormat.Encoding == WaveFormatEncoding.Unknown)
+            {
+                flag = true;
+                var onSoundError = MyAudio.OnSoundError;
+                if (onSoundError != null)
+                    onSoundError(cue, "Unknown audio encoding '" + cue.SubtypeId.ToString() + "', '" + waveFileName + "'");
+            }
+
+            if (dim == MySoundDimensions.D3 && wave.WaveFormat.Channels != 1)
+            {
+                flag = true;
+                var onSoundError = MyAudio.OnSoundError;
+                if (onSoundError != null)
+                    onSoundError(cue, string.Format("3D sound '{0}', '{1}' must be in mono, got {2} channels", cue.SubtypeId.ToString(), waveFileName, wave.WaveFormat.Channels));
+            }
+
+            if (wave.WaveFormat.Encoding != encoding)
+            {
+                flag = true;
+                var onSoundError = MyAudio.OnSoundError;
+                if (onSoundError != null)
+                    onSoundError(cue, string.Format("Inconsistent sound encoding in '{0}', '{1}', got '{2}', expected '{3}'", cue.SubtypeId.ToString(), waveFileName, wave.WaveFormat.Encoding, encoding));
+            }
+
+            return flag;
+        }
+
+        public void Add(MySoundData cue, MyAudioWave cueWave, bool cacheLoaded)
         {
             string[] files = { cueWave.Start, cueWave.Loop, cueWave.End };
-            SharpDX.Multimedia.WaveFormatEncoding encoding = SharpDX.Multimedia.WaveFormatEncoding.Unknown;
-            bool result = true;
+            WaveFormatEncoding encoding = WaveFormatEncoding.Unknown;
+
             int i = 0;
-            foreach (var waveFilename in files)
+            string fsPath;
+
+            foreach (string waveFilename in files)
             {
-                i++;
-                if (string.IsNullOrEmpty(waveFilename) || m_waves.ContainsKey(waveFilename))
+                ++i;
+                if (string.IsNullOrEmpty(waveFilename) || m_waves.ContainsKey(waveFilename) || !MyWaveBank.FindAudioFile(cue, waveFilename, out fsPath))
                     continue;
 
-                var fsPath = Path.IsPathRooted(waveFilename) ? waveFilename : Path.Combine(MyFileSystem.ContentPath, "Audio", waveFilename);
-                var exists = MyFileSystem.FileExists(fsPath);
-                result |= exists;
-                if (exists)
+                if (cue.StreamSound)
+                    break;
+
+                try
                 {
-                    if (cue.StreamSound)
+                    MyInMemoryWave wave = new MyInMemoryWave(cue, fsPath, this, cached: cacheLoaded);
+                    if (i != 2)
                     {
-                        return true;
+                        wave.Buffer.LoopCount = 0;
+                        wave.Buffer.LoopBegin = 0;
+                        wave.Buffer.LoopLength = 0;
                     }
-                    try
-                    {
-                        MyInMemoryWave wave = new MyInMemoryWave(cue, fsPath, this);
-                        if (i != 2)
-                            wave.Buffer.LoopCount = 0;
-                        m_waves[waveFilename] = wave;
+                    m_waves[waveFilename] = wave;
 
-                        // check the formats
-                        if (encoding == SharpDX.Multimedia.WaveFormatEncoding.Unknown)
-                        {
-                            encoding = wave.WaveFormat.Encoding;
-                        }
-
-                        // check the formats
-                        if (wave.WaveFormat.Encoding == SharpDX.Multimedia.WaveFormatEncoding.Unknown)
-                        {
-                            if (MyAudio.OnSoundError != null)
-                            {
-                                var msg = string.Format("Unknown audio encoding '{0}', '{1}'", cue.SubtypeId.ToString(), waveFilename);
-                                MyAudio.OnSoundError(cue, msg);
-                            }
-                            result = false;
-                        }
-
-                        // 3D sounds must be mono
-                        if (cueWave.Type == MySoundDimensions.D3 && wave.WaveFormat.Channels != 1)
-                        {
-                            if (MyAudio.OnSoundError != null)
-                            {
-                                var msg = string.Format("3D sound '{0}', '{1}' must be in mono, got {2} channels", cue.SubtypeId.ToString(), waveFilename, wave.WaveFormat.Channels);
-                                MyAudio.OnSoundError(cue, msg);
-                            }
-                            result = false;
-                        }
-
-                        // all parts of the sound must have the same encoding
-                        if (wave.WaveFormat.Encoding != encoding)
-                        {
-                            if (MyAudio.OnSoundError != null)
-                            {
-                                var msg = string.Format("Inconsistent sound encoding in '{0}', '{1}', got '{2}', expected '{3}'", cue.SubtypeId.ToString(), waveFilename, wave.WaveFormat.Encoding, encoding);
-                                MyAudio.OnSoundError(cue, msg);
-                            }
-                            result = false;
-                        }
-                    }
-                    catch (Exception e)
-                    {
-                        if (MyAudio.OnSoundError != null)
-                        {
-                            var msg = string.Format("Unable to load audio file: '{0}', '{1}': {2}", cue.SubtypeId.ToString(), waveFilename, e.ToString());
-                            MyAudio.OnSoundError(cue, msg);
-                        }
-                        result = false;
-                    }
-                    // Second catch shouldn't be needed according to http://stackoverflow.com/questions/5345436/net-exception-catch-block
-                    // all non-exceptions will be wrapped as type derived from Exception and caught above.
-                    //catch
-                    //{
-                    //    if (MyAudio.OnSoundError != null)
-                    //    {
-                    //        var msg = string.Format("Unable to load audio file: '{0}', '{1}': {2}", cue.SubtypeId.ToString(), waveFilename, "Something went horribly wrong");
-                    //        MyAudio.OnSoundError(cue, msg);
-                    //    }
-                    //    result = false;
-                    //}
+                    CheckWaveErrors(cue, wave, ref encoding, cueWave.Type, fsPath);
                 }
-                else
+                catch (Exception ex)
                 {
-                    if (MyAudio.OnSoundError != null)
-                    {
-                        var msg = string.Format("Unable to find audio file: '{0}', '{1}'", cue.SubtypeId.ToString(), waveFilename);
-                        MyAudio.OnSoundError(cue, msg);
-                    }
-                    result = false;
+                    MySoundErrorDelegate? onSoundError = MyAudio.OnSoundError;
+                    if (onSoundError != null)
+                        onSoundError(cue, string.Format("Unable to load audio file: '{0}', '{1}': {2}", cue.SubtypeId.ToString(), waveFilename, ex));
                 }
             }
-            return result;
         }
 
         public void Dispose()
         {
-            foreach (var wave in m_waves)
-            {
+            foreach (KeyValuePair<string, MyInMemoryWave> wave in m_waves)
                 wave.Value.Dispose();
-            }
             m_waves.Clear();
         }
 
-        public MyInMemoryWave GetWave(string filename)
+        public MyInMemoryWave? GetWave(string filename) => string.IsNullOrEmpty(filename) || !m_waves.ContainsKey(filename) ? null : m_waves[filename];
+
+        public MyInMemoryWave? GetStreamedWave(string waveFileName, MySoundData cue, MySoundDimensions dim = MySoundDimensions.D2)
         {
-            if (string.IsNullOrEmpty(filename) || !m_waves.ContainsKey(filename))
+            if (string.IsNullOrEmpty(waveFileName))
                 return null;
 
-            return m_waves[filename];
-        }
-
-        internal readonly Dictionary<string, MyInMemoryWave> LoadedStreamedWaves = new Dictionary<string, MyInMemoryWave>();
-
-        public MyInMemoryWave GetStreamedWave(string filename, MySoundData cue, MySoundDimensions dim = MySoundDimensions.D2)
-        {
-            if (string.IsNullOrEmpty(filename))
-                return null;
-
-            SharpDX.Multimedia.WaveFormatEncoding encoding = SharpDX.Multimedia.WaveFormatEncoding.Unknown;
-            var fsPath = Path.IsPathRooted(filename) ? filename : Path.Combine(MyFileSystem.ContentPath, "Audio", filename);
-            var exists = MyFileSystem.FileExists(fsPath);
-            if (exists)
+            string fsPath;
+            if (FindAudioFile(cue, waveFileName, out fsPath))
             {
                 try
                 {
-                    MyInMemoryWave wave;
+                    MyInMemoryWave? wave;
                     if (!LoadedStreamedWaves.TryGetValue(fsPath, out wave))
-                        wave = LoadedStreamedWaves[fsPath] = new MyInMemoryWave(cue, fsPath, this, true);
+                    {
+                        wave = new MyInMemoryWave(cue, fsPath, this, true);
+                        LoadedStreamedWaves[fsPath] = wave;
+                    }
                     else
                         wave.Reference();
-
-                    // check the formats
-                    if (encoding == SharpDX.Multimedia.WaveFormatEncoding.Unknown)
+                    WaveFormatEncoding encoding = WaveFormatEncoding.Unknown;
+                    if (CheckWaveErrors(cue, wave, ref encoding, dim, waveFileName))
                     {
-                        encoding = wave.WaveFormat.Encoding;
+                        wave.Dereference();
+                        wave = null;
                     }
-
-                    // check the formats
-                    if (wave.WaveFormat.Encoding == SharpDX.Multimedia.WaveFormatEncoding.Unknown)
-                    {
-                        if (MyAudio.OnSoundError != null)
-                        {
-                            var msg = string.Format("Unknown audio encoding '{0}', '{1}'", cue.SubtypeId.ToString(), filename);
-                            MyAudio.OnSoundError(cue, msg);
-                        }
-                        return null;
-                    }
-
-                    // 3D sounds must be mono
-                    if (dim == MySoundDimensions.D3 && wave.WaveFormat.Channels != 1)
-                    {
-                        if (MyAudio.OnSoundError != null)
-                        {
-                            var msg = string.Format("3D sound '{0}', '{1}' must be in mono, got {2} channels", cue.SubtypeId.ToString(), filename, wave.WaveFormat.Channels);
-                            MyAudio.OnSoundError(cue, msg);
-                        }
-                        return null;
-                    }
-
-                    // all parts of the sound must have the same encoding
-                    if (wave.WaveFormat.Encoding != encoding)
-                    {
-                        if (MyAudio.OnSoundError != null)
-                        {
-                            var msg = string.Format("Inconsistent sound encoding in '{0}', '{1}', got '{2}', expected '{3}'", cue.SubtypeId.ToString(), filename, wave.WaveFormat.Encoding, encoding);
-                            MyAudio.OnSoundError(cue, msg);
-                        }
-                        return null;
-                    }
-
                     return wave;
                 }
-                catch (Exception e)
+                catch (Exception ex)
                 {
-                    if (MyAudio.OnSoundError != null)
-                    {
-                        var msg = string.Format("Unable to load audio file: '{0}', '{1}': {2}", cue.SubtypeId.ToString(), filename, e.ToString());
-                        MyAudio.OnSoundError(cue, msg);
-                    }
-                    return null;
+                    MySoundErrorDelegate? onSoundError = MyAudio.OnSoundError;
+                    if (onSoundError != null)
+                        onSoundError(cue, string.Format("Unable to load audio file: '{0}', '{1}': {2}", cue.SubtypeId.ToString(), waveFileName, ex));
                 }
             }
-            else
-            {
-                if (MyAudio.OnSoundError != null)
-                {
-                    var msg = string.Format("Unable to find audio file: '{0}', '{1}'", cue.SubtypeId.ToString(), filename);
-                    MyAudio.OnSoundError(cue, msg);
-                }
-            }
+
             return null;
-        }
-
-        public List<MyWaveFormat> GetWaveFormats()
-        {
-            List<MyWaveFormat> output = new List<MyWaveFormat>();
-            foreach (var wave in m_waves)
-            {
-                MyWaveFormat myWaveFormat = new MyWaveFormat()
-                {
-                    Encoding = wave.Value.WaveFormat.Encoding,
-                    Channels = wave.Value.WaveFormat.Channels,
-                    SampleRate = wave.Value.WaveFormat.SampleRate,
-                    WaveFormat = wave.Value.WaveFormat
-                };
-                if (!output.Contains(myWaveFormat))
-                    output.Add(myWaveFormat);
-                else
-                {
-
-                }
-            }
-            return (output);
         }
     }
 }

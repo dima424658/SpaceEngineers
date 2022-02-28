@@ -1,19 +1,19 @@
-﻿//#define DEBUG_AUDIO
-
+﻿using SharpDX;
+using SharpDX.Mathematics.Interop;
 using SharpDX.Multimedia;
+using SharpDX.X3DAudio;
+using SharpDX.XAPO;
+using SharpDX.XAPO.Fx;
 using SharpDX.XAudio2;
-using SharpDX.XAudio2.Fx;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
-using System.IO;
+using System.Runtime.CompilerServices;
 using System.Text;
 using System.Threading;
-using VRage.Audio.X3DAudio;
 using VRage.Collections;
 using VRage.Data.Audio;
-using VRage.FileSystem;
-using VRage.Trace;
+using VRage.Library.Utils;
 using VRage.Utils;
 using VRageMath;
 
@@ -21,48 +21,1496 @@ namespace VRage.Audio
 {
     public class MyXAudio2 : IMyAudio
     {
-        VoiceSendDescriptor[] m_gameAudioVoiceDesc;
-        VoiceSendDescriptor[] m_musicAudioVoiceDesc;
-        VoiceSendDescriptor[] m_hudAudioVoiceDesc;
+        private static readonly object lockObject = new object();
+        private VoiceSendDescriptor[] m_gameAudioVoiceDesc;
+        private VoiceSendDescriptor[] m_musicAudioVoiceDesc;
+        private VoiceSendDescriptor[] m_hudAudioVoiceDesc;
+        private MyAudioInitParams m_initParams;
+        private SharpDX.XAudio2.XAudio2 m_audioEngine;
+        private DeviceDetails m_deviceDetails;
+        private MasteringVoice m_masterVoice;
+        private SubmixVoice m_gameAudioVoice;
+        private SubmixVoice m_musicAudioVoice;
+        private SubmixVoice m_hudAudioVoice;
+        private MyCueBank m_cueBank;
+        private MyEffectBank m_effectBank;
+        private SharpDX.X3DAudio.X3DAudio m_x3dAudio;
+        private bool m_canPlay;
+        private bool m_loading;
+        private float m_volumeHud;
+        private float m_volumeDefault;
+        private float m_volumeMusic;
+        private float m_volumeVoiceChat;
+        private bool m_mute;
+        private bool m_musicAllowed;
+        private bool m_musicOn;
+        private bool m_gameSoundsOn;
+        private bool m_voiceChatEnabled;
+        private MyMusicState m_musicState;
+        private bool m_loopMusic;
+        private MySourceVoice m_musicCue;
+        private CalculateFlags m_calculateFlags;
+        internal static MyXAudio2 Instance;
+        private SortedList<int, MyXAudio2.MyMusicTransition> m_nextTransitions = new SortedList<int, MyXAudio2.MyMusicTransition>();
+        private MyXAudio2.MyMusicTransition? m_currentTransition;
+        private bool m_transitionForward;
+        private float m_volumeAtTransitionStart;
+        private int m_timeFromTransitionStart;
+        private const int TRANSITION_TIME = 1000;
+        private Listener m_listener;
+        private Emitter m_helperEmitter;
+        private List<IMy3DSoundEmitter> m_3Dsounds;
+        private bool m_canUpdate3dSounds = true;
+        private int m_soundInstancesTotal2D;
+        private int m_soundInstancesTotal3D;
+        private SharpDX.XAudio2.Fx.Reverb m_reverb;
+        private bool m_applyReverb;
+        private float m_globalVolumeLevel = 1f;
+        private float m_globalVolumeTarget = 1f;
+        private float m_globalVolumeIncrement = 1f;
+        private bool m_globalVolumeRaising = true;
+        private bool m_globalVolumeChanging;
+        private bool m_useVolumeLimiter;
+        private bool m_useSameSoundLimiter;
+        private bool m_enableReverb;
+        private bool m_enableDoppler = true;
+        private bool m_reverbSet;
+        private bool m_soundLimiterReady;
+        private bool m_soundLimiterSet;
+        private Thread m_updateInProgress;
+        private volatile bool m_deviceLost;
+        private int m_lastDeviceCount;
+        private ListReader<MySoundData> m_sounds;
+        private ListReader<MyAudioEffect> m_effects;
+        private int m_deviceNumber;
+        private readonly IMyPlatformAudio m_audioPlatform;
+        private static MyStringId NO_RANDOM = MyStringId.GetOrCompute("NoRandom");
+        private MyTimeSpan m_nextDeviceCountCheck;
+        private static readonly float[] m_outputMatrixMono = new float[8]
+        {
+      0.5f,
+      0.5f,
+      0.0f,
+      0.0f,
+      0.4f,
+      0.4f,
+      0.0f,
+      0.0f
+        };
+        private static readonly float[] m_outputMatrixStereo = new float[16]
+        {
+      1f,
+      0.0f,
+      0.0f,
+      1f,
+      0.0f,
+      0.0f,
+      0.0f,
+      0.0f,
+      0.8f,
+      0.0f,
+      0.0f,
+      0.8f,
+      0.0f,
+      0.0f,
+      0.0f,
+      0.0f
+        };
+        private MyConcurrentQueue<MySourceVoice> m_voicesForStopPlayingCallback = new MyConcurrentQueue<MySourceVoice>();
 
-        MyAudioInitParams m_initParams;
+        private event MyXAudio2.VolumeChangeHandler OnSetVolumeHud;
 
-        XAudio2 m_audioEngine;
-        DeviceDetails m_deviceDetails;
-        MasteringVoice m_masterVoice;
-        SubmixVoice m_gameAudioVoice;
-        SubmixVoice m_musicAudioVoice;
-        SubmixVoice m_hudAudioVoice;
+        private event MyXAudio2.VolumeChangeHandler OnSetVolumeGame;
 
-        MyCueBank m_cueBank;
-        MyEffectBank m_effectBank;
+        private event MyXAudio2.VolumeChangeHandler OnSetVolumeMusic;
 
-        MyX3DAudio m_x3dAudio;
+        Dictionary<MyCueId, MySoundData>.ValueCollection IMyAudio.CueDefinitions => !this.m_canPlay ? (Dictionary<MyCueId, MySoundData>.ValueCollection)null : this.m_cueBank.CueDefinitions;
 
-        bool m_canPlay;
+        List<MyStringId> IMyAudio.GetCategories() => !this.m_canPlay ? (List<MyStringId>)null : this.m_cueBank.GetCategories();
 
-        float m_volumeHud;
-        float m_volumeDefault;
-        float m_volumeMusic;
-        float m_volumeVoiceChat;
+        MySoundData IMyAudio.GetCue(MyCueId cueId) => !this.m_canPlay ? (MySoundData)null : this.m_cueBank.GetCue(cueId);
 
-        bool m_mute;
-        bool m_musicAllowed;
+        Dictionary<MyStringId, List<MyCueId>> IMyAudio.GetAllMusicCues() => this.m_cueBank == null ? (Dictionary<MyStringId, List<MyCueId>>)null : this.m_cueBank.GetMusicCues();
 
-        bool m_musicOn;
-        bool m_gameSoundsOn;
+        public int SampleRate => this.m_masterVoice == null || this.m_deviceLost ? 0 : this.m_masterVoice.VoiceDetails.InputSampleRate;
 
-        bool m_voiceChatEnabled;
+        public MySoundData SoloCue { get; set; }
 
-        MyMusicState m_musicState;
-        bool m_loopMusic;
+        public bool GameSoundIsPaused { get; private set; }
 
-        MySourceVoice m_musicCue;
+        bool IMyAudio.UseVolumeLimiter
+        {
+            get => this.m_useVolumeLimiter;
+            set => this.m_useVolumeLimiter = value;
+        }
 
-        CalculateFlags m_calculateFlags;
+        bool IMyAudio.UseSameSoundLimiter
+        {
+            get => this.m_useSameSoundLimiter;
+            set => this.m_useSameSoundLimiter = value;
+        }
 
-        //  Music cues
-        struct MyMusicTransition
+        bool IMyAudio.EnableReverb
+        {
+            get => this.m_enableReverb;
+            set
+            {
+                this.m_enableReverb = value;
+                if (!(!this.m_reverbSet & value) || this.m_masterVoice == null)
+                    return;
+                if (this.m_masterVoice.VoiceDetails.InputSampleRate > MyAudio.MAX_SAMPLE_RATE)
+                    return;
+                try
+                {
+                    this.m_reverb = new SharpDX.XAudio2.Fx.Reverb(this.m_audioEngine);
+                    this.m_gameAudioVoice.SetEffectChain(new EffectDescriptor((AudioProcessor)this.m_reverb, this.m_masterVoice.VoiceDetails.InputChannelCount));
+                    this.m_gameAudioVoice.DisableEffect(0);
+                    this.m_reverbSet = true;
+                }
+                catch (Exception ex)
+                {
+                    MyLog.Default.WriteLine("Failed to enable Reverb" + ex.ToString());
+                }
+            }
+        }
+
+        bool IMyAudio.EnableDoppler
+        {
+            get => this.m_enableDoppler;
+            set => this.m_enableDoppler = value;
+        }
+
+        public bool CacheLoaded
+        {
+            get => this.m_initParams.CacheLoaded;
+            set => this.m_initParams.CacheLoaded = value;
+        }
+
+        public bool CanPlay => this.m_canPlay;
+
+        public IMyPlatformAudio AudioPlatform => this.m_audioPlatform;
+
+        public MyXAudio2(IMyPlatformAudio audioPlatform) => this.m_audioPlatform = audioPlatform;
+
+        private void Init()
+        {
+            MyXAudio2.Instance = this;
+            this.StartEngine();
+            this.CreateX3DAudio();
+        }
+
+        private int GetDeviceCount() => this.m_audioPlatform.DeviceCount;
+
+        private DeviceDetails GetDeviceDetails(int index) => this.m_audioPlatform.GetDeviceDetails(index, false);
+
+        private void StartEngine()
+        {
+            if (this.m_audioEngine != null)
+            {
+                this.DisposeVoices();
+                this.m_audioEngine.CriticalError -= new EventHandler<ErrorEventArgs>(this.m_audioEngine_CriticalError);
+                this.m_audioPlatform.DisposeAudioEngine();
+            }
+            this.m_audioEngine = this.m_audioPlatform.InitAudioEngine();
+            this.m_audioEngine.CriticalError += new EventHandler<ErrorEventArgs>(this.m_audioEngine_CriticalError);
+            this.m_lastDeviceCount = this.GetDeviceCount();
+            this.m_deviceNumber = 0;
+            bool flag = false;
+            do
+            {
+                try
+                {
+                    this.m_deviceDetails = this.GetDeviceDetails(this.m_deviceNumber);
+                    if (this.m_deviceDetails.Role == DeviceRole.DefaultCommunicationsDevice)
+                    {
+                        ++this.m_deviceNumber;
+                        if (this.m_deviceNumber == this.GetDeviceCount())
+                        {
+                            --this.m_deviceNumber;
+                            goto label_13;
+                        }
+                    }
+                    else
+                        goto label_13;
+                }
+                catch (Exception ex)
+                {
+                    MyLog.Default.WriteLine(string.Format("Failed to get device details:"));
+                    MyLog.Default.WriteLine(ex.ToString());
+                    flag = true;
+                }
+            }
+            while (!flag);
+            try
+            {
+                MyLog.Default.WriteLine(string.Format("Device no.: {0}\n\tdevice count: {1}", (object)this.m_deviceNumber, (object)this.GetDeviceCount()), LoggingOptions.AUDIO);
+            }
+            catch (Exception ex)
+            {
+            }
+            this.m_deviceNumber = 0;
+            this.m_deviceDetails = this.GetDeviceDetails(this.m_deviceNumber);
+        label_13:
+            this.m_masterVoice = this.m_audioPlatform.CreateMasteringVoice(this.m_deviceNumber);
+            if (this.m_useVolumeLimiter)
+            {
+                MasteringLimiter effect = new MasteringLimiter(this.m_audioEngine);
+                effect.Parameter = effect.Parameter with
+                {
+                    Loudness = 0
+                };
+                this.m_masterVoice.SetEffectChain(new EffectDescriptor((AudioProcessor)effect));
+                this.m_soundLimiterReady = true;
+                this.m_masterVoice.DisableEffect(0);
+            }
+            this.m_calculateFlags = CalculateFlags.Matrix | CalculateFlags.Doppler;
+            if ((this.m_deviceDetails.OutputFormat.ChannelMask & Speakers.LowFrequency) != Speakers.None)
+                this.m_calculateFlags |= CalculateFlags.RedirectToLfe;
+            VoiceDetails voiceDetails = this.m_masterVoice.VoiceDetails;
+            this.m_gameAudioVoice = new SubmixVoice(this.m_audioEngine, voiceDetails.InputChannelCount, voiceDetails.InputSampleRate);
+            this.m_musicAudioVoice = new SubmixVoice(this.m_audioEngine, voiceDetails.InputChannelCount, voiceDetails.InputSampleRate);
+            this.m_hudAudioVoice = new SubmixVoice(this.m_audioEngine, voiceDetails.InputChannelCount, voiceDetails.InputSampleRate);
+            this.m_gameAudioVoiceDesc = new VoiceSendDescriptor[1]
+            {
+        new VoiceSendDescriptor((Voice) this.m_gameAudioVoice)
+            };
+            this.m_musicAudioVoiceDesc = new VoiceSendDescriptor[1]
+            {
+        new VoiceSendDescriptor((Voice) this.m_musicAudioVoice)
+            };
+            this.m_hudAudioVoiceDesc = new VoiceSendDescriptor[1]
+            {
+        new VoiceSendDescriptor((Voice) this.m_hudAudioVoice)
+            };
+            if (!this.m_mute)
+                return;
+            this.m_gameAudioVoice.SetVolume(0.0f);
+            this.m_musicAudioVoice.SetVolume(0.0f);
+        }
+
+        public void SetReverbParameters(float diffusion, float roomSize)
+        {
+        }
+
+        public void ChangeGlobalVolume(float level, float time)
+        {
+            level = MyMath.Clamp(level, 0.0f, 1f);
+            this.m_globalVolumeChanging = false;
+            if ((double)level == (double)this.m_globalVolumeLevel)
+                return;
+            if ((double)time <= 0.0)
+            {
+                this.m_globalVolumeLevel = level;
+                if (this.m_musicAudioVoice != null && !this.m_musicAudioVoice.IsDisposed)
+                    this.m_musicAudioVoice.SetVolume(this.m_volumeMusic * level);
+                if (this.m_hudAudioVoice != null && !this.m_hudAudioVoice.IsDisposed)
+                    this.m_hudAudioVoice.SetVolume(this.m_volumeHud * level);
+                if (this.m_gameAudioVoice == null || this.m_gameAudioVoice.IsDisposed)
+                    return;
+                this.m_gameAudioVoice.SetVolume(this.m_volumeDefault * level);
+            }
+            else
+            {
+                this.m_globalVolumeChanging = true;
+                this.m_globalVolumeIncrement = (float)(((double)level - (double)this.m_globalVolumeLevel) / 60.0) / time;
+                this.m_globalVolumeTarget = level;
+                this.m_globalVolumeRaising = (double)level > (double)this.m_globalVolumeLevel;
+            }
+        }
+
+        private void GlobalVolumeUpdate()
+        {
+            this.m_globalVolumeLevel += this.m_globalVolumeIncrement;
+            if (this.m_globalVolumeRaising && (double)this.m_globalVolumeLevel >= (double)this.m_globalVolumeTarget || !this.m_globalVolumeRaising && (double)this.m_globalVolumeLevel <= (double)this.m_globalVolumeTarget)
+            {
+                this.m_globalVolumeLevel = this.m_globalVolumeTarget;
+                this.m_globalVolumeChanging = false;
+            }
+            if (this.m_musicAudioVoice != null)
+                this.m_musicAudioVoice.SetVolume(this.m_volumeMusic * this.m_globalVolumeLevel);
+            if (this.m_hudAudioVoice != null)
+                this.m_hudAudioVoice.SetVolume(this.m_volumeHud * this.m_globalVolumeLevel);
+            if (this.m_gameAudioVoice == null)
+                return;
+            this.m_gameAudioVoice.SetVolume(this.m_volumeDefault * this.m_globalVolumeLevel);
+        }
+
+        public void EnableMasterLimiter(bool enable)
+        {
+            if (!this.m_useVolumeLimiter || !this.m_soundLimiterReady || enable == this.m_soundLimiterSet)
+                return;
+            if (enable)
+                this.m_masterVoice.EnableEffect(0);
+            else
+                this.m_masterVoice.DisableEffect(0);
+            this.m_soundLimiterSet = enable;
+        }
+
+        private void m_audioEngine_CriticalError(object sender, ErrorEventArgs e)
+        {
+            this.m_cueBank.SetAudioEngine((SharpDX.XAudio2.XAudio2)null);
+            if (e.ErrorCode.Code == -2004353023)
+                MyLog.Default.WriteLine("Audio device removed");
+            else
+                MyLog.Default.WriteLine("Audio error: " + (object)e.ErrorCode);
+            this.m_deviceLost = true;
+        }
+
+        private void CreateX3DAudio()
+        {
+            if (this.m_audioEngine == null)
+                return;
+            this.m_x3dAudio = new SharpDX.X3DAudio.X3DAudio(this.m_deviceDetails.OutputFormat.ChannelMask);
+            string str = this.m_deviceDetails.DisplayName;
+            int length = str.IndexOf(char.MinValue);
+            if (length != -1)
+                str = str.Substring(0, length);
+            MyLog.Default.WriteLine(string.Format("MyAudio.CreateX3DAudio - Device: {0} - Channel #: {1} - Sample rate: {2}", (object)str, (object)this.m_deviceDetails.OutputFormat.Channels, (object)this.SampleRate));
+        }
+
+        private void DisposeVoices()
+        {
+            this.m_hudAudioVoice?.Dispose();
+            this.m_musicAudioVoice?.Dispose();
+            this.m_gameAudioVoice?.Dispose();
+            this.m_masterVoice?.Dispose();
+        }
+
+        private void CheckIfDeviceChanged()
+        {
+            MyTimeSpan myTimeSpan = new MyTimeSpan(Stopwatch.GetTimestamp());
+            if (myTimeSpan > this.m_nextDeviceCountCheck)
+            {
+                this.m_nextDeviceCountCheck = myTimeSpan + MyTimeSpan.FromSeconds(1.0);
+                try
+                {
+                    this.m_deviceLost = this.m_lastDeviceCount != this.GetDeviceCount();
+                }
+                catch (SharpDXException ex)
+                {
+                    this.m_deviceLost = true;
+                }
+            }
+            if (!this.m_deviceLost)
+                return;
+            try
+            {
+                this.Init();
+            }
+            catch (Exception ex)
+            {
+                MyLog.Default.WriteLine("Exception during loading audio engine. Game continues, but without sound. Details: " + ex.ToString(), LoggingOptions.AUDIO);
+                MyLog.Default.WriteLine("Device ID: " + this.m_deviceDetails.DeviceID, LoggingOptions.AUDIO);
+                MyLog.Default.WriteLine("Device name: " + this.m_deviceDetails.DisplayName, LoggingOptions.AUDIO);
+                MyLog.Default.WriteLine("Device role: " + (object)this.m_deviceDetails.Role, LoggingOptions.AUDIO);
+                MyLog.Default.WriteLine("Output format: " + (object)this.m_deviceDetails.OutputFormat, LoggingOptions.AUDIO);
+                this.m_canPlay = false;
+                return;
+            }
+            this.m_deviceLost = false;
+            if (this.m_initParams.SimulateNoSoundCard)
+                this.m_canPlay = false;
+            if (!this.m_canPlay)
+                return;
+            if (this.m_cueBank != null)
+                this.m_cueBank.SetAudioEngine(this.m_audioEngine, this.m_gameAudioVoiceDesc, this.m_hudAudioVoiceDesc, this.m_musicAudioVoiceDesc);
+            this.m_gameAudioVoice.SetVolume(this.m_volumeDefault * this.m_globalVolumeLevel);
+            this.m_hudAudioVoice.SetVolume(this.m_volumeHud * this.m_globalVolumeLevel);
+            this.m_musicAudioVoice.SetVolume(this.m_volumeMusic * this.m_globalVolumeLevel);
+            lock (this.m_3Dsounds)
+                this.m_3Dsounds.Clear();
+            if (this.m_musicCue == null || !this.m_musicCue.IsPlaying)
+                return;
+            this.m_musicCue = this.PlaySound(this.m_musicCue.CueEnum, (IMy3DSoundEmitter)null, MySoundDimensions.D2, false, false, true);
+            if (this.m_musicCue != null)
+                this.m_musicCue.SetOutputVoices(this.m_musicAudioVoiceDesc);
+            this.UpdateMusic(0);
+        }
+
+        public void LoadData(
+          MyAudioInitParams initParams,
+          ListReader<MySoundData> sounds,
+          ListReader<MyAudioEffect> effects)
+        {
+            MyLog.Default.WriteLine("MyAudio.LoadData - START");
+            MyLog.Default.IncreaseIndent();
+            this.m_initParams = initParams;
+            this.m_sounds = sounds;
+            this.m_effects = effects;
+            this.m_canPlay = true;
+            try
+            {
+                this.Init();
+            }
+            catch (Exception ex)
+            {
+                MyLog.Default.WriteLine("Exception during loading audio engine. Game continues, but without sound. Details: " + ex.ToString(), LoggingOptions.AUDIO);
+                MyLog.Default.WriteLine("Device ID: " + this.m_deviceDetails.DeviceID, LoggingOptions.AUDIO);
+                MyLog.Default.WriteLine("Device name: " + this.m_deviceDetails.DisplayName, LoggingOptions.AUDIO);
+                MyLog.Default.WriteLine("Device role: " + (object)this.m_deviceDetails.Role, LoggingOptions.AUDIO);
+                MyLog.Default.WriteLine("Output format: " + (object)this.m_deviceDetails.OutputFormat, LoggingOptions.AUDIO);
+                this.m_canPlay = false;
+            }
+            if (this.m_initParams.SimulateNoSoundCard)
+                this.m_canPlay = false;
+            if (this.m_canPlay)
+            {
+                this.m_cueBank = new MyCueBank(this.m_audioEngine, sounds, this.m_gameAudioVoiceDesc, this.m_hudAudioVoiceDesc, this.m_musicAudioVoiceDesc, initParams.CacheLoaded);
+                this.m_cueBank.UseSameSoundLimiter = this.m_useSameSoundLimiter;
+                this.m_cueBank.SetSameSoundLimiter();
+                this.m_cueBank.DisablePooling = initParams.DisablePooling;
+                this.m_effectBank = new MyEffectBank(effects, this.m_audioEngine);
+                this.m_3Dsounds = new List<IMy3DSoundEmitter>();
+                this.m_listener = new Listener();
+                this.m_listener.SetDefaultValues();
+                this.m_helperEmitter = new Emitter();
+                this.m_helperEmitter.SetDefaultValues();
+                this.m_musicOn = true;
+                this.m_gameSoundsOn = true;
+                this.m_musicAllowed = true;
+                if (this.m_musicCue != null && this.m_musicCue.IsPlaying)
+                {
+                    this.m_musicCue = this.PlaySound(this.m_musicCue.CueEnum, (IMy3DSoundEmitter)null, MySoundDimensions.D2, false, false, true);
+                    if (this.m_musicCue != null)
+                    {
+                        this.m_musicCue.SetOutputVoices(this.m_musicAudioVoiceDesc);
+                        this.m_musicAudioVoice.SetVolume(this.m_volumeMusic * this.m_globalVolumeLevel);
+                    }
+                    this.UpdateMusic(0);
+                }
+                else
+                    this.m_musicState = MyMusicState.Stopped;
+                this.m_loopMusic = true;
+                this.m_transitionForward = false;
+                this.m_timeFromTransitionStart = 0;
+                this.m_soundInstancesTotal2D = 0;
+                this.m_soundInstancesTotal3D = 0;
+            }
+            MyLog.Default.DecreaseIndent();
+            MyLog.Default.WriteLine("MyAudio.LoadData - END");
+        }
+
+        public void SetSameSoundLimiter()
+        {
+            if (this.m_cueBank == null)
+                return;
+            this.m_cueBank.UseSameSoundLimiter = this.m_useSameSoundLimiter;
+            this.m_cueBank.SetSameSoundLimiter();
+        }
+
+        public void UnloadData()
+        {
+            MyLog.Default.WriteLine("MyAudio.UnloadData - START");
+            if (this.m_3Dsounds != null)
+            {
+                lock (this.m_3Dsounds)
+                    this.m_3Dsounds.Clear();
+            }
+            if (this.m_canPlay)
+            {
+                this.m_audioEngine.StopEngine();
+                this.m_cueBank?.Dispose();
+            }
+            this.SoloCue = (MySoundData)null;
+            this.DisposeVoices();
+            if (this.m_audioEngine != null)
+            {
+                this.m_audioEngine.CriticalError -= new EventHandler<ErrorEventArgs>(this.m_audioEngine_CriticalError);
+                this.m_audioPlatform.DisposeAudioEngine();
+                this.m_audioEngine = (SharpDX.XAudio2.XAudio2)null;
+                this.m_cueBank = (MyCueBank)null;
+                this.m_masterVoice = (MasteringVoice)null;
+                this.m_hudAudioVoice = (SubmixVoice)null;
+                this.m_gameAudioVoice = (SubmixVoice)null;
+                this.m_musicAudioVoice = (SubmixVoice)null;
+            }
+            this.m_canPlay = false;
+            this.m_reverbSet = false;
+            MyLog.Default.WriteLine("MyAudio.UnloadData - END");
+            MyXAudio2.Instance = (MyXAudio2)null;
+        }
+
+        public void ClearSounds()
+        {
+            if (this.m_cueBank == null)
+                return;
+            this.m_cueBank.ClearSounds();
+        }
+
+        public void ReloadData()
+        {
+            this.UnloadData();
+            this.LoadData(this.m_initParams, this.m_sounds, this.m_effects);
+        }
+
+        public void ReloadData(ListReader<MySoundData> sounds, ListReader<MyAudioEffect> effects)
+        {
+            lock (MyXAudio2.lockObject)
+                this.m_loading = true;
+            this.UnloadData();
+            this.LoadData(this.m_initParams, sounds, effects);
+            lock (MyXAudio2.lockObject)
+                this.m_loading = false;
+        }
+
+        public bool ApplyReverb
+        {
+            get => this.m_canPlay && this.m_enableReverb && this.m_cueBank != null && this.m_masterVoice.VoiceDetails.InputSampleRate <= MyAudio.MAX_SAMPLE_RATE && this.m_applyReverb;
+            set
+            {
+                if (!this.m_canPlay || !this.m_reverbSet || this.m_deviceLost || this.m_cueBank == null || !this.m_enableReverb && !this.m_applyReverb)
+                    return;
+                if (this.m_gameAudioVoice != null)
+                {
+                    if (value)
+                    {
+                        this.m_gameAudioVoice.EnableEffect(0);
+                    }
+                    else
+                    {
+                        RawBool enabledRef;
+                        this.m_gameAudioVoice.IsEffectEnabled(0, out enabledRef);
+                        if ((bool)enabledRef)
+                            this.m_gameAudioVoice.DisableEffect(0);
+                    }
+                }
+                this.m_cueBank.ApplyReverb = value;
+                this.m_applyReverb = value;
+            }
+        }
+
+        public float VolumeMusic
+        {
+            get => !this.m_canPlay || !this.m_musicOn ? 0.0f : this.m_volumeMusic;
+            set
+            {
+                if (!this.m_canPlay || !this.m_musicOn || this.m_deviceLost)
+                    return;
+                this.m_volumeMusic = MathHelper.Clamp(value, 0.0f, 1f);
+                this.m_musicAudioVoice.SetVolume(this.m_volumeMusic * this.m_globalVolumeLevel);
+                if (this.OnSetVolumeMusic == null)
+                    return;
+                this.OnSetVolumeMusic(this.m_volumeMusic);
+            }
+        }
+
+        public float VolumeHud
+        {
+            get => !this.m_canPlay ? 0.0f : this.m_volumeHud;
+            set
+            {
+                if (!this.m_canPlay || this.m_deviceLost)
+                    return;
+                this.m_volumeHud = MathHelper.Clamp(value, 0.0f, 1f);
+                this.m_hudAudioVoice.SetVolume(this.m_volumeHud * this.m_globalVolumeLevel);
+                if (this.OnSetVolumeHud == null)
+                    return;
+                this.OnSetVolumeHud(this.m_volumeHud);
+            }
+        }
+
+        public float VolumeGame
+        {
+            get => !this.m_canPlay || !this.m_gameSoundsOn ? 0.0f : this.m_volumeDefault;
+            set
+            {
+                if (!this.m_canPlay || !this.m_gameSoundsOn || this.m_deviceLost)
+                    return;
+                this.m_volumeDefault = MathHelper.Clamp(value, 0.0f, 1f);
+                this.m_gameAudioVoice.SetVolume(this.m_volumeDefault * this.m_globalVolumeLevel);
+                if (this.OnSetVolumeGame == null)
+                    return;
+                this.OnSetVolumeGame(this.m_volumeDefault);
+            }
+        }
+
+        public float VolumeVoiceChat
+        {
+            get => this.m_volumeVoiceChat;
+            set => this.m_volumeVoiceChat = MathHelper.Clamp(value, 0.0f, 5f);
+        }
+
+        public bool EnableVoiceChat
+        {
+            get => this.m_canPlay && this.m_voiceChatEnabled;
+            set
+            {
+                if (this.m_voiceChatEnabled == value)
+                    return;
+                this.m_voiceChatEnabled = value;
+                if (this.VoiceChatEnabled == null)
+                    return;
+                this.VoiceChatEnabled(this.m_voiceChatEnabled);
+            }
+        }
+
+        public event Action<bool> VoiceChatEnabled;
+
+        public void PauseGameSounds()
+        {
+            if (!this.m_canPlay)
+                return;
+            this.GameSoundIsPaused = true;
+            this.m_gameAudioVoice.SetVolume(0.0f);
+            this.m_canUpdate3dSounds = false;
+            if (this.m_musicCue == null)
+                return;
+            this.m_musicCue.VolumeMultiplier = 0.0f;
+        }
+
+        public void ResumeGameSounds()
+        {
+            if (!this.m_canPlay)
+                return;
+            this.GameSoundIsPaused = false;
+            if (!this.Mute)
+                this.m_gameAudioVoice.SetVolume(this.m_volumeDefault * this.m_globalVolumeLevel);
+            this.m_canUpdate3dSounds = true;
+            if (this.m_musicCue == null)
+                return;
+            this.m_musicCue.VolumeMultiplier = 1f;
+        }
+
+        public bool Mute
+        {
+            get => this.m_mute;
+            set
+            {
+                if (this.m_mute == value)
+                    return;
+                this.m_mute = value;
+                if (this.m_mute)
+                {
+                    if (!this.m_canPlay)
+                        return;
+                    this.m_gameAudioVoice.SetVolume(0.0f);
+                    this.m_musicAudioVoice.SetVolume(0.0f);
+                }
+                else
+                {
+                    if (!this.m_canPlay)
+                        return;
+                    if (!this.GameSoundIsPaused)
+                        this.m_gameAudioVoice.SetVolume(this.m_volumeDefault * this.m_globalVolumeLevel);
+                    this.m_musicAudioVoice.SetVolume(this.m_volumeMusic * this.m_globalVolumeLevel);
+                    this.m_hudAudioVoice.SetVolume(this.m_volumeHud * this.m_globalVolumeLevel);
+                }
+            }
+        }
+
+        public bool MusicAllowed
+        {
+            get => this.m_musicAllowed;
+            set => this.m_musicAllowed = value;
+        }
+
+        public bool IsValidTransitionCategory(MyStringId transitionCategory, MyStringId musicCategory) => this.m_canPlay && this.m_cueBank.IsValidTransitionCategory(transitionCategory, musicCategory);
+
+        public void PlayMusic(MyMusicTrack? track = null, int priorityForRandom = 0)
+        {
+            if (!this.m_canPlay || !this.m_musicAllowed)
+                return;
+            bool flag = false;
+            if (track.HasValue)
+            {
+                if (this.HasAnyTransition())
+                    this.m_nextTransitions.Clear();
+                if (!this.m_cueBank.IsValidTransitionCategory(track.Value.TransitionCategory, track.Value.MusicCategory))
+                    flag = true;
+                else
+                    this.ApplyTransition(track.Value.TransitionCategory, 1, new MyStringId?(track.Value.MusicCategory), false);
+            }
+            else if (this.m_musicState == MyMusicState.Stopped && !this.HasAnyTransition())
+                flag = true;
+            if (!flag)
+                return;
+            MyStringId? randomTransitionEnum = this.GetRandomTransitionEnum();
+            if (!randomTransitionEnum.HasValue)
+                return;
+            this.ApplyTransition(randomTransitionEnum.Value, priorityForRandom, new MyStringId?(), false);
+        }
+
+        public IMySourceVoice PlayMusicCue(MyCueId musicCue, bool overrideMusicAllowed = false)
+        {
+            if (!this.m_canPlay || !this.m_musicAllowed && !overrideMusicAllowed)
+                return (IMySourceVoice)null;
+            this.m_musicCue = this.PlaySound(musicCue, (IMy3DSoundEmitter)null, MySoundDimensions.D2, false, false, true);
+            if (this.m_musicCue != null)
+            {
+                this.m_musicCue.SetOutputVoices(this.m_musicAudioVoiceDesc);
+                this.m_musicAudioVoice.SetVolume(this.m_volumeMusic * this.m_globalVolumeLevel);
+            }
+            return (IMySourceVoice)this.m_musicCue;
+        }
+
+        public void StopMusic()
+        {
+            this.m_currentTransition = new MyXAudio2.MyMusicTransition?();
+            this.m_nextTransitions.Clear();
+            this.m_musicState = MyMusicState.Stopped;
+            if (this.m_musicCue == null)
+                return;
+            try
+            {
+                this.m_musicCue.Stop(false);
+            }
+            catch (Exception ex)
+            {
+                MyLog.Default.WriteLine(ex);
+                if (this.m_audioEngine != null && !this.m_audioEngine.IsDisposed)
+                    return;
+                MyLog.Default.WriteLine("Audio engine disposed!", LoggingOptions.AUDIO);
+            }
+        }
+
+        public void MuteHud(bool mute)
+        {
+            if (!this.m_canPlay)
+                return;
+            this.m_hudAudioVoice.SetVolume(mute ? 0.0f : this.m_volumeHud * this.m_globalVolumeLevel);
+        }
+
+        public bool HasAnyTransition() => this.m_nextTransitions.Count > 0;
+
+        public void Update(
+          int stepSizeInMS,
+          Vector3 listenerPosition,
+          Vector3 listenerUp,
+          Vector3 listenerFront,
+          Vector3 listenerVelocity)
+        {
+            lock (MyXAudio2.lockObject)
+            {
+                if (this.m_loading)
+                    return;
+            }
+            if (this.m_canPlay)
+                this.CheckIfDeviceChanged();
+            if (this.Mute)
+                return;
+            this.m_updateInProgress = Thread.CurrentThread;
+            try
+            {
+                if (this.m_canPlay)
+                    this.m_cueBank?.Update();
+                if (!this.m_canPlay)
+                    return;
+                this.m_listener.Position = new RawVector3();
+                this.m_listener.OrientTop = new RawVector3(listenerUp.X, listenerUp.Y, listenerUp.Z);
+                this.m_listener.OrientFront = new RawVector3(listenerFront.X, listenerFront.Y, listenerFront.Z);
+                this.m_listener.Velocity = new RawVector3(listenerVelocity.X, listenerVelocity.Y, listenerVelocity.Z);
+                this.FireCallbacks();
+                this.UpdateMusic(stepSizeInMS);
+                this.Update3DCuesPositions();
+                this.m_effectBank.Update(stepSizeInMS);
+                if (!this.m_globalVolumeChanging)
+                    return;
+                this.GlobalVolumeUpdate();
+            }
+            finally
+            {
+                this.m_updateInProgress = (Thread)null;
+            }
+        }
+
+        private void FireCallbacks()
+        {
+            MySourceVoice instance;
+            while (this.m_voicesForStopPlayingCallback.TryDequeue(out instance))
+                instance.StoppedPlaying.InvokeIfNotNull<IMySourceVoice>((IMySourceVoice)instance);
+        }
+
+        private void UpdateMusic(int stepSizeinMS)
+        {
+            if (this.m_musicState == MyMusicState.Transition)
+            {
+                this.m_timeFromTransitionStart += stepSizeinMS;
+                if (this.m_timeFromTransitionStart >= 1000)
+                {
+                    this.m_musicState = MyMusicState.Stopped;
+                    if (this.m_musicCue != null && this.m_musicCue.IsPlaying)
+                    {
+                        this.m_musicCue.Stop(true);
+                        this.m_musicCue = (MySourceVoice)null;
+                    }
+                }
+                else if (this.m_musicCue != null && this.m_musicCue.IsPlaying)
+                {
+                    float volumeRef;
+                    this.m_musicAudioVoice.GetVolume(out volumeRef);
+                    if ((double)volumeRef > 0.0 && this.m_musicOn)
+                        this.m_musicAudioVoice.SetVolume((float)(1.0 - (double)this.m_timeFromTransitionStart / 1000.0) * this.m_volumeAtTransitionStart * this.m_globalVolumeLevel);
+                }
+            }
+            if (this.m_musicState == MyMusicState.Stopped)
+            {
+                MyXAudio2.MyMusicTransition? nextTransition = this.GetNextTransition();
+                if (this.m_currentTransition.HasValue && this.m_nextTransitions.Count > 0 && nextTransition.HasValue && nextTransition.Value.Priority > this.m_currentTransition.Value.Priority)
+                    this.m_nextTransitions[this.m_currentTransition.Value.Priority] = this.m_currentTransition.Value;
+                this.m_currentTransition = nextTransition;
+                if (this.m_currentTransition.HasValue)
+                {
+                    this.m_musicAudioVoice.SetVolume(this.m_volumeMusic * this.m_globalVolumeLevel);
+                    this.PlayMusicByTransition(this.m_currentTransition.Value);
+                    this.m_nextTransitions.Remove(this.m_currentTransition.Value.Priority);
+                    this.m_musicState = MyMusicState.Playing;
+                }
+            }
+            if (this.m_musicState != MyMusicState.Playing || this.m_musicCue != null && this.m_musicCue.IsPlaying)
+                return;
+            if (this.m_loopMusic && this.m_currentTransition.HasValue)
+            {
+                this.PlayMusicByTransition(this.m_currentTransition.Value);
+            }
+            else
+            {
+                this.m_currentTransition = new MyXAudio2.MyMusicTransition?();
+                MyStringId? nullable = new MyStringId?(MyStringId.GetOrCompute("Default"));
+                if (!nullable.HasValue)
+                    return;
+                this.ApplyTransition(nullable.Value, 0, new MyStringId?(), false);
+            }
+        }
+
+        private MyStringId? GetRandomTransitionEnum()
+        {
+            if (this.m_cueBank == null)
+                return new MyStringId?();
+            MyStringId? randomTransitionEnum = this.m_cueBank.GetRandomTransitionEnum();
+            while (true)
+            {
+                MyStringId? nullable = randomTransitionEnum;
+                MyStringId noRandom = MyXAudio2.NO_RANDOM;
+                if ((nullable.HasValue ? (nullable.HasValue ? (nullable.GetValueOrDefault() == noRandom ? 1 : 0) : 1) : 0) != 0)
+                    randomTransitionEnum = this.m_cueBank.GetRandomTransitionEnum();
+                else
+                    break;
+            }
+            return randomTransitionEnum;
+        }
+
+        bool IMyAudio.ApplyTransition(
+          MyStringId transitionEnum,
+          int priority,
+          MyStringId? category,
+          bool loop)
+        {
+            return this.ApplyTransition(transitionEnum, priority, category, loop);
+        }
+
+        private bool ApplyTransition(
+          MyStringId transitionEnum,
+          int priority,
+          MyStringId? category,
+          bool loop)
+        {
+            if (!this.m_canPlay || !this.m_musicAllowed)
+                return false;
+            if (category.HasValue)
+            {
+                if (category.Value == MyStringId.NullOrEmpty)
+                    category = new MyStringId?();
+                else if (!this.m_cueBank.IsValidTransitionCategory(transitionEnum, category.Value))
+                {
+                    MyLog.Default.WriteLine(string.Format("Category {0} doesn't exist for this transition!", (object)category));
+                    return false;
+                }
+            }
+            MyStringId? nullable;
+            if (this.m_currentTransition.HasValue && this.m_currentTransition.Value.Priority == priority && this.m_currentTransition.Value.TransitionEnum == transitionEnum)
+            {
+                if (category.HasValue)
+                {
+                    MyStringId category1 = this.m_currentTransition.Value.Category;
+                    nullable = category;
+                    if ((nullable.HasValue ? (category1 == nullable.GetValueOrDefault() ? 1 : 0) : 0) == 0)
+                        goto label_13;
+                }
+                if (this.m_musicState != MyMusicState.Transition || this.m_transitionForward)
+                    return false;
+                this.m_musicState = MyMusicState.Playing;
+                return true;
+            }
+        label_13:
+            nullable = category;
+            MyStringId category2 = nullable ?? this.m_cueBank.GetRandomTransitionCategory(ref transitionEnum, ref MyXAudio2.NO_RANDOM);
+            this.m_nextTransitions[priority] = new MyXAudio2.MyMusicTransition(priority, transitionEnum, category2);
+            if (this.m_currentTransition.HasValue && this.m_currentTransition.Value.Priority > priority)
+                return false;
+            this.m_loopMusic = loop;
+            switch (this.m_musicState)
+            {
+                case MyMusicState.Stopped:
+                case MyMusicState.Transition:
+                    return true;
+                case MyMusicState.Playing:
+                    this.StartTransition(true);
+                    goto case MyMusicState.Stopped;
+                default:
+                    throw new InvalidBranchException();
+            }
+        }
+
+        private MyXAudio2.MyMusicTransition? GetNextTransition() => this.m_nextTransitions.Count > 0 ? new MyXAudio2.MyMusicTransition?(this.m_nextTransitions[this.m_nextTransitions.Keys[this.m_nextTransitions.Keys.Count - 1]]) : new MyXAudio2.MyMusicTransition?();
+
+        private void StartTransition(bool forward)
+        {
+            this.m_transitionForward = forward;
+            this.m_musicState = MyMusicState.Transition;
+            this.m_timeFromTransitionStart = 0;
+            this.m_volumeAtTransitionStart = this.m_volumeMusic;
+        }
+
+        internal void StopTransition(int priority)
+        {
+            if (this.m_nextTransitions.ContainsKey(priority))
+                this.m_nextTransitions.Remove(priority);
+            if (!this.m_currentTransition.HasValue || priority != this.m_currentTransition.Value.Priority || this.m_musicState == MyMusicState.Transition)
+                return;
+            this.StartTransition(false);
+        }
+
+        private void PlayMusicByTransition(MyXAudio2.MyMusicTransition transition)
+        {
+            if (this.m_cueBank == null || !this.m_musicAllowed)
+                return;
+            this.m_musicCue = this.PlaySound(this.m_cueBank.GetTransitionCue(transition.TransitionEnum, transition.Category), (IMy3DSoundEmitter)null, MySoundDimensions.D2, false, false, true);
+            if (this.m_musicCue == null)
+                return;
+            this.m_musicCue.SetOutputVoices(this.m_musicAudioVoiceDesc);
+            this.m_musicAudioVoice.SetVolume(this.m_volumeMusic * this.m_globalVolumeLevel);
+        }
+
+        private float VolumeVariation(MySoundData cue) => (float)((double)MyUtils.GetRandomFloat(-1f, 1f) * (double)cue.VolumeVariation * 0.0700000002980232);
+
+        private float PitchVariation(MySoundData cue) => (float)((double)MyUtils.GetRandomFloat(-1f, 1f) * (double)cue.PitchVariation / 100.0);
+
+        float IMyAudio.SemitonesToFrequencyRatio(float semitones) => this.SemitonesToFrequencyRatio(semitones);
+
+        private float SemitonesToFrequencyRatio(float semitones) => SharpDX.XAudio2.XAudio2.SemitonesToFrequencyRatio(semitones);
+
+        private void Add3DCueToUpdateList(IMy3DSoundEmitter source)
+        {
+            lock (this.m_3Dsounds)
+            {
+                if (this.m_3Dsounds.Contains(source))
+                    return;
+                this.m_3Dsounds.Add(source);
+            }
+        }
+
+        public int GetUpdating3DSoundsCount() => this.m_3Dsounds == null ? 0 : this.m_3Dsounds.Count;
+
+        public int GetSoundInstancesTotal2D() => this.m_soundInstancesTotal2D;
+
+        public int GetSoundInstancesTotal3D() => this.m_soundInstancesTotal3D;
+
+        private void Update3DCuesState(bool updatePosition = false)
+        {
+            if (!this.m_canUpdate3dSounds || this.m_3Dsounds == null || this.m_3Dsounds.Count <= 0)
+                return;
+            lock (this.m_3Dsounds)
+            {
+                int index = 0;
+                while (index < this.m_3Dsounds.Count)
+                {
+                    IMy3DSoundEmitter source = this.m_3Dsounds[index];
+                    object syncRoot = source.SyncRoot;
+                    if (Monitor.TryEnter(syncRoot))
+                    {
+                        try
+                        {
+                            IMySourceVoice sound = source.Sound;
+                            if (sound == null)
+                                this.m_3Dsounds.RemoveAt(index);
+                            else if (!sound.IsPlaying && !sound.IsBuffered)
+                            {
+                                source.SetSound((IMySourceVoice)null, nameof(Update3DCuesState));
+                                this.m_3Dsounds.RemoveAt(index);
+                            }
+                            else
+                            {
+                                if (((MySourceVoice)sound).Emitter != source)
+                                    MyLog.Default.WriteLine(string.Format("Emitter sound history: {0}", source.DebugData));
+                                if (updatePosition)
+                                    this.Update3DCuePosition(source);
+                                ++index;
+                            }
+                        }
+                        finally
+                        {
+                            Monitor.Exit(syncRoot);
+                        }
+                    }
+                    else
+                        ++index;
+                }
+            }
+        }
+
+        private void Update3DCuesPositions()
+        {
+            if (!this.m_canPlay)
+                return;
+            this.Update3DCuesState(true);
+        }
+
+        private void Update3DCuePosition(IMy3DSoundEmitter source)
+        {
+            MySoundData cue = this.m_cueBank?.GetCue(source.SoundId);
+            if (cue == null || source.Sound == null || !(source.Sound is MySourceVoice sound))
+                return;
+            int num = 0;
+            try
+            {
+                float maxDistance = (float)((double)source.CustomMaxDistance ?? (double)cue.MaxDistance);
+                if (!sound.IsBuffered)
+                {
+                    num = 1;
+                    Vector3D sourcePosition = source.SourcePosition;
+                    num = 2;
+                    Vector3 velocity = source.Velocity;
+                    num = 3;
+                    this.m_helperEmitter.UpdateValuesOmni((Vector3)sourcePosition, velocity, cue, this.m_deviceDetails.OutputFormat.Channels, new float?(maxDistance), source.DopplerScaler);
+                    num = 4;
+                    sound.DistanceToListener = this.Apply3D(sound, this.m_listener, this.m_helperEmitter, source.SourceChannels, this.m_deviceDetails.OutputFormat.Channels, this.m_calculateFlags, maxDistance, sound.FrequencyRatio, sound.Silent, !source.Realistic, this.m_enableDoppler);
+                }
+                else
+                {
+                    num = 5;
+                    Vector3D sourcePosition = source.SourcePosition;
+                    num = 6;
+                    Vector3 velocity = source.Velocity;
+                    num = 7;
+                    this.m_helperEmitter.UpdateValuesOmni((Vector3)sourcePosition, velocity, maxDistance, this.m_deviceDetails.OutputFormat.Channels, cue.VolumeCurve, source.DopplerScaler);
+                    num = 8;
+                    sound.DistanceToListener = this.Apply3D(sound, this.m_listener, this.m_helperEmitter, source.SourceChannels, this.m_deviceDetails.OutputFormat.Channels, this.m_calculateFlags, maxDistance, sound.FrequencyRatio, sound.Silent, !source.Realistic, this.m_enableDoppler);
+                }
+            }
+            catch (Exception ex)
+            {
+                MyLog.Default.WriteLine(ex);
+                MyLog.Default.WriteLine(string.Format("{0} {1} {2} {3}", (object)sound.IsBuffered, (object)num, (object)(sound.Voice == null), (object)(this.m_listener == null)));
+                MyLog.Default.WriteLine(string.Format("Emitter sound history: {0}", source.DebugData));
+                MyLog.Default.WriteLine("SourceVoice history: " + sound.DebugData);
+                IMy3DSoundEmitter emitter = sound.Emitter;
+                throw;
+            }
+        }
+
+        private float Apply3D(
+          MySourceVoice managedVoice,
+          Listener listener,
+          Emitter emitter,
+          int srcChannels,
+          int dstChannels,
+          CalculateFlags flags,
+          float maxDistance,
+          float frequencyRatio,
+          bool silent,
+          bool use3DCalculation = true,
+          bool fullDoppler = true)
+        {
+            DspSettings settings = new DspSettings(srcChannels, dstChannels);
+            int num1 = srcChannels * dstChannels;
+            SourceVoice voice = managedVoice.Voice;
+            if (use3DCalculation)
+            {
+                if (!fullDoppler)
+                {
+                    Listener listener1 = listener;
+                    Emitter emitter1 = emitter;
+                    RawVector3 rawVector3_1 = new RawVector3();
+                    RawVector3 rawVector3_2;
+                    RawVector3 rawVector3_3 = rawVector3_2 = rawVector3_1;
+                    emitter1.Velocity = rawVector3_2;
+                    RawVector3 rawVector3_4 = rawVector3_3;
+                    listener1.Velocity = rawVector3_4;
+                }
+                this.m_x3dAudio.Calculate(listener, emitter, flags, settings);
+                settings.DopplerFactor = MathHelper.Clamp(settings.DopplerFactor, 0.9f, 1f);
+                voice.SetFrequencyRatio(frequencyRatio * settings.DopplerFactor);
+            }
+            else
+            {
+                settings.EmitterToListenerDistance = Vector3.Distance(new Vector3(listener.Position.X, listener.Position.Y, listener.Position.Z), new Vector3(emitter.Position.X, emitter.Position.Y, emitter.Position.Z));
+                if (srcChannels <= 2 && dstChannels <= 8)
+                {
+                    float[] numArray = srcChannels == 1 ? MyXAudio2.m_outputMatrixMono : MyXAudio2.m_outputMatrixStereo;
+                    for (int index = 0; index < settings.MatrixCoefficients.Length; ++index)
+                        settings.MatrixCoefficients[index] = numArray[index];
+                }
+                else
+                {
+                    for (int index = 0; index < num1; ++index)
+                        settings.MatrixCoefficients[index] = 1f;
+                }
+            }
+            if ((double)emitter.InnerRadius == 0.0)
+            {
+                float num2 = !silent ? MathHelper.Clamp((float)(1.0 - (double)settings.EmitterToListenerDistance / (double)maxDistance), 0.0f, 1f) : 0.0f;
+                for (int index = 0; index < num1; ++index)
+                    settings.MatrixCoefficients[index] *= num2;
+            }
+            try
+            {
+                voice.SetOutputMatrix((Voice)null, settings.SourceChannelCount, settings.DestinationChannelCount, settings.MatrixCoefficients);
+            }
+            catch
+            {
+                MyLog myLog = MyLog.Default;
+                myLog.WriteLine(string.Format("Exception at SetOutputMatrix [{0}x{1}] IsValid: {2}", (object)srcChannels, (object)dstChannels, (object)voice.IsValid()));
+                try
+                {
+                    myLog.WriteLine(string.Format("{0};{1};{2};{3}", (object)managedVoice.CueEnum.Hash.String, (object)managedVoice.GetOutputChannels(), (object)managedVoice.IsPlaying, (object)managedVoice.IsPaused));
+                    myLog.WriteLine("Output voices: ");
+                    VoiceSendDescriptor[] currentOutputVoices = managedVoice.CurrentOutputVoices;
+                    if (currentOutputVoices == null)
+                    {
+                        myLog.WriteLine("NULL");
+                    }
+                    else
+                    {
+                        foreach (VoiceSendDescriptor voiceSendDescriptor in currentOutputVoices)
+                        {
+                            VoiceDetails voiceDetails = voiceSendDescriptor.OutputVoice.VoiceDetails;
+                            myLog.WriteLine(string.Format("{0} {1} {2}", (object)(VoiceFlags)voiceDetails.ActiveFlags, (object)voiceDetails.InputChannelCount, (object)voiceDetails.InputSampleRate));
+                        }
+                    }
+                    myLog.WriteLine("Current matrix");
+                    try
+                    {
+                        voice.GetOutputMatrix((Voice)null, srcChannels, dstChannels, settings.MatrixCoefficients);
+                        myLog.WriteLine(string.Join<float>(";", (IEnumerable<float>)settings.MatrixCoefficients));
+                    }
+                    catch
+                    {
+                        myLog.WriteLine("Get failed");
+                        for (int destinationChannels = 1; destinationChannels <= 10; ++destinationChannels)
+                        {
+                            try
+                            {
+                                float[] numArray = new float[srcChannels * destinationChannels];
+                                voice.GetOutputMatrix((Voice)null, srcChannels, destinationChannels, numArray);
+                                myLog.WriteLine(string.Format("Success: GetOutputMatrix [{0}x{1}]", (object)srcChannels, (object)destinationChannels));
+                                myLog.WriteLine(string.Join<float>(";", (IEnumerable<float>)numArray));
+                                break;
+                            }
+                            catch
+                            {
+                            }
+                        }
+                    }
+                    if (!currentOutputVoices.IsNullOrEmpty<VoiceSendDescriptor>())
+                    {
+                        try
+                        {
+                            myLog.WriteLine("Retry with single");
+                            voice.SetOutputMatrix(currentOutputVoices[0].OutputVoice, settings.SourceChannelCount, settings.DestinationChannelCount, settings.MatrixCoefficients);
+                        }
+                        catch
+                        {
+                            myLog.WriteLine("Single failed");
+                        }
+                    }
+                    myLog.WriteLine("Test outChannels");
+                    for (int destinationChannels = 1; destinationChannels <= 5; ++destinationChannels)
+                    {
+                        for (int sourceChannels = 1; sourceChannels <= 5; ++sourceChannels)
+                        {
+                            try
+                            {
+                                float[] levelMatrixRef = new float[sourceChannels * destinationChannels];
+                                voice.SetOutputMatrix((Voice)null, sourceChannels, destinationChannels, levelMatrixRef);
+                                myLog.WriteLine(string.Format("Success: SetOutputMatrix [{0}x{1}]", (object)sourceChannels, (object)destinationChannels));
+                                break;
+                            }
+                            catch
+                            {
+                            }
+                        }
+                    }
+                    int outputChannels = managedVoice.GetOutputChannels();
+                    DeviceDetails deviceDetails = this.AudioPlatform.GetDeviceDetails(0, true);
+                    myLog.WriteLine(string.Format("Retry with new dimensions [{0}x{1}]", (object)outputChannels, (object)deviceDetails.OutputFormat.Channels));
+                    float[] levelMatrixRef1 = new float[outputChannels * deviceDetails.OutputFormat.Channels];
+                    voice.SetOutputMatrix((Voice)null, outputChannels, deviceDetails.OutputFormat.Channels, levelMatrixRef1);
+                    myLog.WriteLine("Retry succeeded");
+                }
+                catch
+                {
+                    myLog.WriteLine("FAIL");
+                }
+                throw;
+            }
+            return settings.EmitterToListenerDistance;
+        }
+
+        private void StopUpdating3DCue(IMy3DSoundEmitter source)
+        {
+            if (!this.m_canPlay)
+                return;
+            lock (this.m_3Dsounds)
+                this.m_3Dsounds.Remove(source);
+        }
+
+        public void StopUpdatingAll3DCues()
+        {
+            if (!this.m_canPlay)
+                return;
+            lock (this.m_3Dsounds)
+                this.m_3Dsounds.Clear();
+        }
+
+        bool IMyAudio.SourceIsCloseEnoughToPlaySound(
+          Vector3 sourcePosition,
+          MyCueId cueId,
+          float? customMaxDistance)
+        {
+            return this.SourceIsCloseEnoughToPlaySound(sourcePosition, cueId, customMaxDistance);
+        }
+
+        public bool SourceIsCloseEnoughToPlaySound(
+          Vector3 sourcePosition,
+          MyCueId cueId,
+          float? customMaxDistance = 0.0f)
+        {
+            if (this.m_cueBank == null || cueId.Hash == MyStringHash.NullOrEmpty)
+                return false;
+            MySoundData cue = this.m_cueBank.GetCue(cueId);
+            if (cue == null)
+                return false;
+            float num1 = sourcePosition.LengthSquared();
+            float? nullable1 = customMaxDistance;
+            float num2 = 0.0f;
+            if ((double)nullable1.GetValueOrDefault() > (double)num2 & nullable1.HasValue)
+            {
+                double num3 = (double)num1;
+                float? nullable2 = customMaxDistance;
+                float? nullable3 = customMaxDistance;
+                nullable1 = nullable2.HasValue & nullable3.HasValue ? new float?(nullable2.GetValueOrDefault() * nullable3.GetValueOrDefault()) : new float?();
+                double valueOrDefault = (double)nullable1.GetValueOrDefault();
+                return num3 <= valueOrDefault & nullable1.HasValue;
+            }
+            return (double)cue.UpdateDistance > 0.0 ? (double)num1 <= (double)cue.UpdateDistance * (double)cue.UpdateDistance : (double)num1 <= (double)cue.MaxDistance * (double)cue.MaxDistance;
+        }
+
+        private MySourceVoice PlaySound(
+          MyCueId cueId,
+          IMy3DSoundEmitter source = null,
+          MySoundDimensions type = MySoundDimensions.D2,
+          bool skipIntro = false,
+          bool skipToEnd = false,
+          bool isMusic = false)
+        {
+            int waveNumber;
+            MySourceVoice sound = this.GetSound(cueId, out waveNumber, source, type, isMusic);
+            if (source != null)
+                source.LastPlayedWaveNumber = -1;
+            if (sound != null)
+            {
+                sound.Start(skipIntro, skipToEnd);
+                if (source != null)
+                    source.LastPlayedWaveNumber = waveNumber;
+            }
+            return sound;
+        }
+
+        private MySourceVoice GetSound(
+          MyCueId cueId,
+          out int waveNumber,
+          IMy3DSoundEmitter source = null,
+          MySoundDimensions type = MySoundDimensions.D2,
+          bool isMusic = false)
+        {
+            waveNumber = -1;
+            if (cueId.Hash == MyStringHash.NullOrEmpty || !this.m_canPlay || this.m_cueBank == null)
+                return (MySourceVoice)null;
+            MySoundData cue = this.m_cueBank.GetCue(cueId);
+            if (cue == null)
+                return (MySourceVoice)null;
+            if (this.SoloCue != null && this.SoloCue != cue)
+                return (MySourceVoice)null;
+            MyVoicePoolType poolType = MyVoicePoolType.Sound;
+            if (cue.IsHudCue)
+                poolType = MyVoicePoolType.Hud;
+            else if (isMusic)
+                poolType = MyVoicePoolType.Music;
+            int tryIgnoreWaveNumber = source != null ? source.LastPlayedWaveNumber : -1;
+            MySourceVoice voice = this.m_cueBank.GetVoice(cueId, out waveNumber, type, tryIgnoreWaveNumber, poolType);
+            if (voice == null && source != null && source.Force3D)
+            {
+                MySoundDimensions type1 = type == MySoundDimensions.D3 ? MySoundDimensions.D2 : MySoundDimensions.D3;
+                voice = this.m_cueBank.GetVoice(cueId, out waveNumber, type1, tryIgnoreWaveNumber, poolType);
+            }
+            if (voice == null)
+                return (MySourceVoice)null;
+            float volume = cue.Volume;
+            float? nullable;
+            if (source != null)
+            {
+                nullable = source.CustomVolume;
+                if (nullable.HasValue)
+                {
+                    nullable = source.CustomVolume;
+                    volume = nullable.Value;
+                }
+            }
+            if ((double)cue.VolumeVariation != 0.0)
+            {
+                float num = this.VolumeVariation(cue);
+                volume = MathHelper.Clamp(volume + num, 0.0f, 1f);
+            }
+            voice.Emitter = source;
+            voice.VolumeMultiplier = 1f;
+            voice.SetVolume(volume);
+            float semitones = cue.Pitch;
+            if ((double)cue.PitchVariation != 0.0)
+                semitones += this.PitchVariation(cue);
+            if (cue.DisablePitchEffects)
+                semitones = 0.0f;
+            voice.FrequencyRatio = (double)semitones == 0.0 ? 1f : this.SemitonesToFrequencyRatio(semitones);
+            if (source != null)
+            {
+                if (source.DebugData is string debugData1 && debugData1.Length > 1000)
+                    source.DebugData = (object)string.Empty;
+                string debugData2 = voice.DebugData;
+                if ((debugData2 != null ? (debugData2.Length > 1000 ? 1 : 0) : 0) != 0)
+                    voice.DebugData = string.Empty;
+            }
+            if (type == MySoundDimensions.D3)
+            {
+                nullable = source.CustomMaxDistance;
+                float maxDistance = (float)((double)nullable ?? (double)cue.MaxDistance);
+                this.m_helperEmitter.UpdateValuesOmni((Vector3)source.SourcePosition, source.Velocity, cue, this.m_deviceDetails.OutputFormat.Channels, new float?(maxDistance), source.DopplerScaler);
+                source.SourceChannels = voice.GetOutputChannels();
+                voice.DistanceToListener = this.Apply3D(voice, this.m_listener, this.m_helperEmitter, source.SourceChannels, this.m_deviceDetails.OutputFormat.Channels, this.m_calculateFlags, maxDistance, voice.FrequencyRatio, voice.Silent, !source.Realistic, this.m_enableDoppler);
+                this.Update3DCuesState();
+                this.Add3DCueToUpdateList(source);
+                ++this.m_soundInstancesTotal3D;
+            }
+            else
+            {
+                voice.DistanceToListener = 0.0f;
+                int outputChannels = voice.GetOutputChannels();
+                int length = outputChannels * this.m_deviceDetails.OutputFormat.Channels;
+                float[] levelMatrixRef = new float[length];
+                for (int index = 0; index < length; ++index)
+                    levelMatrixRef[index] = 1f;
+                voice.Voice.SetOutputMatrix((Voice)null, outputChannels, this.m_deviceDetails.OutputFormat.Channels, levelMatrixRef);
+                this.StopUpdating3DCue(source);
+                ++this.m_soundInstancesTotal2D;
+            }
+            return voice;
+        }
+
+        IMySourceVoice IMyAudio.PlaySound(
+          MyCueId cueId,
+          IMy3DSoundEmitter source,
+          MySoundDimensions type,
+          bool skipIntro,
+          bool skipToEnd)
+        {
+            return (IMySourceVoice)this.PlaySound(cueId, source, type, skipIntro, skipToEnd, false);
+        }
+
+        IMySourceVoice IMyAudio.GetSound(
+          MyCueId cueId,
+          IMy3DSoundEmitter source,
+          MySoundDimensions type)
+        {
+            return (IMySourceVoice)this.GetSound(cueId, out int _, source, type);
+        }
+
+        IMySourceVoice IMyAudio.GetSound(
+          IMy3DSoundEmitter source,
+          MySoundDimensions dimension)
+        {
+            if (!this.m_canPlay || this.m_deviceLost)
+                return (IMySourceVoice)null;
+            WaveFormat sourceFormat = new WaveFormat(24000, 16, 1);
+            if (source.DebugData is string debugData && debugData.Length > 1000)
+                source.DebugData = (object)string.Empty;
+            source.SourceChannels = sourceFormat.Channels;
+            MySourceVoice managedVoice = new MySourceVoice(this.m_audioEngine, sourceFormat);
+            managedVoice.Emitter = source;
+            float? nullable = source.CustomVolume;
+            float volume = (float)((double)nullable ?? 1.0);
+            nullable = source.CustomMaxDistance;
+            float maxDistance = (float)((double)nullable ?? 0.0);
+            managedVoice.SetVolume(volume);
+            if (dimension == MySoundDimensions.D3)
+            {
+                this.m_helperEmitter.UpdateValuesOmni((Vector3)source.SourcePosition, source.Velocity, maxDistance, this.m_deviceDetails.OutputFormat.Channels, MyCurveType.Linear, source.DopplerScaler);
+                managedVoice.DistanceToListener = this.Apply3D(managedVoice, this.m_listener, this.m_helperEmitter, source.SourceChannels, this.m_deviceDetails.OutputFormat.Channels, this.m_calculateFlags, maxDistance, managedVoice.FrequencyRatio, managedVoice.Silent, !source.Realistic, this.m_enableDoppler);
+                this.Update3DCuesState();
+                this.Add3DCueToUpdateList(source);
+                ++this.m_soundInstancesTotal3D;
+            }
+            return (IMySourceVoice)managedVoice;
+        }
+
+        public void WriteDebugInfo(StringBuilder sb)
+        {
+            if (this.m_cueBank == null)
+                return;
+            this.m_cueBank.WriteDebugInfo(sb);
+        }
+
+        public bool IsLoopable(MyCueId cueId)
+        {
+            if (cueId.Hash == MyStringHash.NullOrEmpty || this.m_cueBank == null)
+                return false;
+            MySoundData cue = this.m_cueBank.GetCue(cueId);
+            return cue != null && cue.Loopable;
+        }
+
+        public ListReader<IMy3DSoundEmitter> Get3DSounds() => (ListReader<IMy3DSoundEmitter>)this.m_3Dsounds;
+
+        public IMyAudioEffect ApplyEffect(
+          IMySourceVoice input,
+          MyStringHash effect,
+          MyCueId[] cueIds = null,
+          float? duration = null,
+          bool musicEffect = false)
+        {
+            if (this.m_effectBank == null)
+                return (IMyAudioEffect)null;
+            List<MySourceVoice> mySourceVoiceList = new List<MySourceVoice>();
+            if (cueIds != null)
+            {
+                foreach (MyCueId cueId in cueIds)
+                {
+                    MySourceVoice sound = this.GetSound(cueId, out int _);
+                    if (sound != null)
+                        mySourceVoiceList.Add(sound);
+                }
+            }
+            IMyAudioEffect effect1 = (IMyAudioEffect)this.m_effectBank.CreateEffect(input, effect, mySourceVoiceList.ToArray(), duration);
+            if (musicEffect && effect1.OutputSound is MySourceVoice)
+                (effect1.OutputSound as MySourceVoice).SetOutputVoices(this.m_musicAudioVoiceDesc);
+            return effect1;
+        }
+
+        public Vector3 GetListenerPosition() => this.m_listener == null ? Vector3.Zero : new Vector3(this.m_listener.Position.X, this.m_listener.Position.Y, this.m_listener.Position.Z);
+
+        public void EnumerateLastSounds(Action<StringBuilder, bool> a)
+        {
+        }
+
+        public void DisposeCache() => MyInMemoryWaveDataCache.Static.Dispose();
+
+        public void Preload(string soundFile) => MyInMemoryWaveDataCache.Static.Preload(soundFile);
+
+        [Conditional("DEBUG")]
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private void CheckUpdate()
+        {
+        }
+
+        internal void EnqueueStopPlayingCallback(MySourceVoice voice) => this.m_voicesForStopPlayingCallback.Enqueue(voice);
+
+        private struct MyMusicTransition
         {
             public int Priority;
             public MyStringId TransitionEnum;
@@ -70,1355 +1518,12 @@ namespace VRage.Audio
 
             public MyMusicTransition(int priority, MyStringId transitionEnum, MyStringId category)
             {
-                Priority = priority;
-                TransitionEnum = transitionEnum;
-                Category = category;
+                this.Priority = priority;
+                this.TransitionEnum = transitionEnum;
+                this.Category = category;
             }
         }
 
-        SortedList<int, MyMusicTransition> m_nextTransitions = new SortedList<int, MyMusicTransition>();
-        MyMusicTransition? m_currentTransition;
-        bool m_transitionForward;
-        StringBuilder m_currentTransitionDescription = new StringBuilder();
-
-        float m_volumeAtTransitionStart;
-        int m_timeFromTransitionStart; // in ms
-        const int TRANSITION_TIME = 1000;     // in ms
-
-        Listener m_listener;
-        Emitter m_helperEmitter; // The emitter describes an entity which is making a 3D sound.
-        List<IMy3DSoundEmitter> m_3Dsounds; // List of currently playing 3D sounds to update
-        bool m_canUpdate3dSounds = true;
-
-        //  Number of sound instances (cue) created/added from the application start
-        int m_soundInstancesTotal2D;
-        int m_soundInstancesTotal3D;
-
-        //  Events
-        delegate void VolumeChangeHandler(float newVolume);
-        event VolumeChangeHandler OnSetVolumeHud, OnSetVolumeGame, OnSetVolumeMusic;
-
-        //reverb
-        private Reverb m_reverb = null;
-        private bool m_applyReverb = false;
-
-        //global volume change
-        private float m_globalVolumeLevel = 1f;
-        private float m_globalVolumeTarget = 1f;
-        private float m_globalVolumeIncrement = 1f;
-        private bool m_globalVolumeRaising = true;
-        private bool m_globalVolumeChanging = false;
-
-
-        Dictionary<MyCueId, MySoundData>.ValueCollection IMyAudio.CueDefinitions { get { return m_canPlay ? m_cueBank.CueDefinitions : null; } }
-        List<MyStringId> IMyAudio.GetCategories() { return m_canPlay ? m_cueBank.GetCategories() : null; }
-        MySoundData IMyAudio.GetCue(MyCueId cueId) { return m_canPlay ? m_cueBank.GetCue(cueId) : null; }
-        Dictionary<MyStringId, List<MyCueId>> IMyAudio.GetAllMusicCues() { return m_cueBank != null ? m_cueBank.GetMusicCues() : null; }
-
-        int IMyAudio.SampleRate { get { return m_masterVoice != null ? m_masterVoice.VoiceDetails.InputSampleRate : 0; } }
-
-        public MySoundData SoloCue { get; set; }
-        public bool GameSoundIsPaused { get; private set; }
-        private bool m_useVolumeLimiter = false;
-        private bool m_useSameSoundLimiter = false;
-        private bool m_enableReverb = false;
-        private bool m_reverbSet = false;
-        private bool m_soundLimiterReady = false;
-        private bool m_soundLimiterSet = false;
-        bool IMyAudio.UseVolumeLimiter
-        { 
-            get
-            {
-                return m_useVolumeLimiter;
-            }
-            set
-            {
-                m_useVolumeLimiter = value;
-            }
-        }
-        bool IMyAudio.UseSameSoundLimiter
-        {
-            get
-            {
-                return m_useSameSoundLimiter;
-            }
-            set
-            {
-                m_useSameSoundLimiter = value;
-            }
-        }
-        bool IMyAudio.EnableReverb
-        {
-            get
-            {
-                return m_enableReverb;
-            }
-            set
-            {
-                m_enableReverb = value;
-                if (!m_reverbSet && value && m_masterVoice != null && m_masterVoice.VoiceDetails.InputSampleRate <= MyAudio.MAX_SAMPLE_RATE)
-                {
-                    m_reverb = new Reverb(m_audioEngine);
-                    EffectDescriptor descriptor = new EffectDescriptor(m_reverb, m_masterVoice.VoiceDetails.InputChannelCount);
-                    m_gameAudioVoice.SetEffectChain(descriptor);
-                    m_gameAudioVoice.DisableEffect(0);
-                    m_reverbSet = true;
-                }
-            }
-        }
-
-        volatile bool m_deviceLost = false;
-        int m_lastDeviceCount = 0;
-        private ListReader<MySoundData> m_sounds;
-        private ListReader<MyAudioEffect> m_effects;
-        private int m_deviceNumber;
-
-        private void Init()
-        {
-            StartEngine();
-            CreateX3DAudio();
-        }
-
-        private void StartEngine()
-        {
-            if (m_audioEngine != null)
-            {
-                DisposeVoices();
-                m_audioEngine.CriticalError -= m_audioEngine_CriticalError;
-                m_audioEngine.Dispose();
-            }
-
-            // Init/reinit engine
-            m_audioEngine = new XAudio2(XAudio2Version.Version27);
-
-            // A way to disable SharpDX callbacks
-            //var meth = m_audioEngine.GetType().GetMethod("UnregisterForCallbacks_", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-            //var callbacks = m_audioEngine.GetType().GetField("engineShadowPtr", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
-            //meth.Invoke((object)m_audioEngine, new object[] { callbacks.GetValue(m_audioEngine) });
-
-            m_audioEngine.CriticalError += m_audioEngine_CriticalError;
-            m_lastDeviceCount = m_audioEngine.DeviceCount;
-
-
-            m_deviceNumber = 0;
-            while (true) //find first non com device
-            {
-                try
-                {
-                    m_deviceDetails = m_audioEngine.GetDeviceDetails(m_deviceNumber);
-                    if (m_deviceDetails.Role == DeviceRole.DefaultCommunicationsDevice)
-                    {
-                        m_deviceNumber++;
-                        if (m_deviceNumber == m_audioEngine.DeviceCount)
-                        {
-                            m_deviceNumber--;
-                            break;
-                        }
-                    }
-                    else
-                        break;
-                }
-                catch(Exception e)
-                {
-                    MyLog.Default.WriteLine(string.Format("Failed to get device details.\n\tdevice no.: {0}\n\tdevice count: {1}",m_deviceNumber, m_audioEngine.DeviceCount),LoggingOptions.AUDIO);
-                    MyLog.Default.WriteLine(e.ToString());
-                    m_deviceNumber = 0;
-                    m_deviceDetails = m_audioEngine.GetDeviceDetails(m_deviceNumber);
-                    break;
-                }
-            }
-
-            m_masterVoice = new MasteringVoice(m_audioEngine, XAudio2.DefaultChannels, XAudio2.DefaultSampleRate, m_deviceNumber);
-            
-            if (m_useVolumeLimiter)
-            {
-                var limiter = new SharpDX.XAPO.Fx.MasteringLimiter(m_audioEngine);
-                var param = limiter.Parameter;
-                param.Loudness = 0;
-                limiter.Parameter = param;
-                //TODO: this throws exception in 3.0.1 version
-                var effectDescriptor = new EffectDescriptor(limiter);
-                m_masterVoice.SetEffectChain(effectDescriptor);
-                m_soundLimiterReady = true;
-                m_masterVoice.DisableEffect(0);
-                //m_masterVoice.EnableEffect(0);
-                //limiter.Dispose();
-            }
-
-            m_calculateFlags = CalculateFlags.Matrix | CalculateFlags.Doppler;
-            if ((m_deviceDetails.OutputFormat.ChannelMask & Speakers.LowFrequency) != 0)
-            {
-                m_calculateFlags |= CalculateFlags.RedirectToLfe;
-            }
-
-			var masterDetails = m_masterVoice.VoiceDetails;
-            m_gameAudioVoice = new SubmixVoice(m_audioEngine, masterDetails.InputChannelCount, masterDetails.InputSampleRate);
-            m_musicAudioVoice = new SubmixVoice(m_audioEngine, masterDetails.InputChannelCount, masterDetails.InputSampleRate);
-            m_hudAudioVoice = new SubmixVoice(m_audioEngine, masterDetails.InputChannelCount, masterDetails.InputSampleRate);
-            m_gameAudioVoiceDesc = new VoiceSendDescriptor[] { new VoiceSendDescriptor(m_gameAudioVoice) };
-            m_musicAudioVoiceDesc = new VoiceSendDescriptor[] { new VoiceSendDescriptor(m_musicAudioVoice) };
-            m_hudAudioVoiceDesc = new VoiceSendDescriptor[] { new VoiceSendDescriptor(m_hudAudioVoice) };
-
-            if (m_mute)
-            { // keep sounds muted 
-                m_gameAudioVoice.SetVolume(0);
-                m_musicAudioVoice.SetVolume(0);
-            }
-        }
-
-        public void SetReverbParameters(float diffusion, float roomSize)
-        {
-            /*ReverbParameters newParameters = new ReverbParameters();
-            newParameters.Diffusion = MyMath.Clamp(diffusion, Reverb.MinimumDiffusion, Reverb.MaximumDiffusion);
-            newParameters.RoomSize = MyMath.Clamp(roomSize, Reverb.MinimumRoomsize, Reverb.MaximumRoomsize);
-            m_reverb.Parameter = newParameters;*/
-        }
-
-        public void ChangeGlobalVolume(float level, float time)
-        {
-            level = MyMath.Clamp(level, 0, 1f);
-            m_globalVolumeChanging = false;
-            if (level != m_globalVolumeLevel)
-            {
-                if (time <= 0f)
-                {
-                    m_globalVolumeLevel = level;
-                    if (m_musicAudioVoice != null && !m_musicAudioVoice.IsDisposed)
-                        m_musicAudioVoice.SetVolume(m_volumeMusic * level);
-                    if (m_hudAudioVoice != null && !m_hudAudioVoice.IsDisposed)
-                        m_hudAudioVoice.SetVolume(m_volumeHud * level);
-                    if (m_gameAudioVoice != null && !m_gameAudioVoice.IsDisposed)
-                        m_gameAudioVoice.SetVolume(m_volumeDefault * level);
-                }
-                else
-                {
-                    m_globalVolumeChanging = true;
-                    m_globalVolumeIncrement = ((level - m_globalVolumeLevel) / 60f) / time;
-                    m_globalVolumeTarget = level;
-                    m_globalVolumeRaising = level > m_globalVolumeLevel;
-                }
-            }
-        }
-
-        private void GlobalVolumeUpdate()
-        {
-            m_globalVolumeLevel += m_globalVolumeIncrement;
-            if((m_globalVolumeRaising && m_globalVolumeLevel >= m_globalVolumeTarget) || (!m_globalVolumeRaising && m_globalVolumeLevel <= m_globalVolumeTarget))
-            {
-                m_globalVolumeLevel = m_globalVolumeTarget;
-                m_globalVolumeChanging = false;
-            }
-            if (m_musicAudioVoice != null)
-                m_musicAudioVoice.SetVolume(m_volumeMusic * m_globalVolumeLevel);
-            if (m_hudAudioVoice != null)
-                m_hudAudioVoice.SetVolume(m_volumeHud * m_globalVolumeLevel);
-            if (m_gameAudioVoice != null)
-                m_gameAudioVoice.SetVolume(m_volumeDefault * m_globalVolumeLevel);
-        }
-
-        public void EnableMasterLimiter(bool enable)
-        {
-            if (m_useVolumeLimiter && m_soundLimiterReady && enable != m_soundLimiterSet)
-            {
-                if (enable)
-                    m_masterVoice.EnableEffect(0);
-                else
-                    m_masterVoice.DisableEffect(0);
-                m_soundLimiterSet = enable;
-            }
-        }
-
-        void m_audioEngine_CriticalError(object sender, SharpDX.XAudio2.ErrorEventArgs e)
-        {
-            const uint LEAP_E_INVALID_CALL = 0x88880001;
-
-            if (((uint)e.ErrorCode.Code) == LEAP_E_INVALID_CALL)
-            {
-                MyLog.Default.WriteLine("Audio device removed");
-            }
-            else
-            {
-                MyLog.Default.WriteLine("Audio error: " + e.ErrorCode);
-            }
-            m_deviceLost = true;
-        }
-
-        private void CreateX3DAudio()
-        {
-            if (m_audioEngine == null)
-                return;
-
-            m_x3dAudio = new MyX3DAudio(m_deviceDetails.OutputFormat.ChannelMask);
-
-            MyLog.Default.WriteLine(string.Format("MyAudio.CreateX3DAudio - Device: {0} - Channel #: {1}", m_deviceDetails.DisplayName, m_deviceDetails.OutputFormat.Channels));
-        }
-
-        private void DisposeVoices()
-        {
-            if (m_hudAudioVoice != null)
-                m_hudAudioVoice.Dispose();
-
-            if (m_musicAudioVoice != null)
-                m_musicAudioVoice.Dispose();
-
-            if (m_gameAudioVoice != null)
-                m_gameAudioVoice.Dispose();
-
-            if (m_masterVoice != null)
-                m_masterVoice.Dispose();
-        }
-
-        private void CheckIfDeviceChanged()
-        {
-            // DeviceCount cannot be called on XAudio >= 2.8 (Windows 8)
-            // Maybe call DeviceCount with XAudio 2.7 and use different API for windows 8
-            // http://blogs.msdn.com/b/chuckw/archive/2012/04/02/xaudio2-and-windows-8-consumer-preview.aspx
-            // DeviceCount is very slow even on Windows 7 sometimes, don't know why
-            if (m_deviceLost)// || m_lastDeviceCount != m_audioEngine.DeviceCount)
-            {
-                m_deviceLost = false;
-
-                try
-                {
-                    Init();
-                }
-                catch (Exception ex)
-                {
-                    MyLog.Default.WriteLine("Exception during loading audio engine. Game continues, but without sound. Details: " + ex.ToString(), LoggingOptions.AUDIO);
-                    MyLog.Default.WriteLine("Device ID: " + m_deviceDetails.DeviceID, LoggingOptions.AUDIO);
-                    MyLog.Default.WriteLine("Device name: " + m_deviceDetails.DisplayName, LoggingOptions.AUDIO);
-                    MyLog.Default.WriteLine("Device role: " + m_deviceDetails.Role, LoggingOptions.AUDIO);
-                    MyLog.Default.WriteLine("Output format: " + m_deviceDetails.OutputFormat, LoggingOptions.AUDIO);
-
-                    //  This exception is the only way I can know if we can play sound (e.g. if computer doesn't have sound card).
-                    //  I didn't find other ways of checking it.
-                    m_canPlay = false;
-                }
-
-                if (m_initParams.SimulateNoSoundCard)
-                    m_canPlay = false;
-
-                if (m_canPlay)
-                {
-                    if (m_cueBank != null)
-                        m_cueBank.SetAudioEngine(m_audioEngine);
-                    m_gameAudioVoice.SetVolume(m_volumeDefault * m_globalVolumeLevel);
-                    m_hudAudioVoice.SetVolume(m_volumeHud * m_globalVolumeLevel);
-                    m_musicAudioVoice.SetVolume(m_volumeMusic * m_globalVolumeLevel);
-                    //TODO: JN reinit sounds so they play
-                    m_3Dsounds.Clear();
-
-                    if ((m_musicCue != null) && m_musicCue.IsPlaying)
-                    {
-                        // restarts music cue
-                        m_musicCue = PlaySound(m_musicCue.CueEnum);
-                        if (m_musicCue != null)
-                            m_musicCue.SetOutputVoices(m_musicAudioVoiceDesc);
-
-                        UpdateMusic(0);
-                    }
-                }
-            }
-        }
-
-
-        public void LoadData(MyAudioInitParams initParams, ListReader<MySoundData> sounds, ListReader<MyAudioEffect> effects)
-        {
-            MyLog.Default.WriteLine("MyAudio.LoadData - START");
-            MyLog.Default.IncreaseIndent();
-            m_initParams = initParams;
-            m_sounds = sounds;
-            m_effects = effects;
-            m_canPlay = true;
-            try
-            {
-                // has to be called, as others can access the initialized members
-                Init();
-            }
-            catch (Exception ex)
-            {
-                MyLog.Default.WriteLine("Exception during loading audio engine. Game continues, but without sound. Details: " + ex.ToString(), LoggingOptions.AUDIO);
-                MyLog.Default.WriteLine("Device ID: " + m_deviceDetails.DeviceID, LoggingOptions.AUDIO);
-                MyLog.Default.WriteLine("Device name: " + m_deviceDetails.DisplayName, LoggingOptions.AUDIO);
-                MyLog.Default.WriteLine("Device role: " + m_deviceDetails.Role, LoggingOptions.AUDIO);
-                MyLog.Default.WriteLine("Output format: " + m_deviceDetails.OutputFormat, LoggingOptions.AUDIO);
-
-                //  This exception is the only way I can know if we can play sound (e.g. if computer doesn't have sound card).
-                //  I didn't find other ways of checking it.
-                m_canPlay = false;
-            }
-
-            if (m_initParams.SimulateNoSoundCard)
-                m_canPlay = false;
-
-            if (m_canPlay)
-            {
-                m_cueBank = new MyCueBank(m_audioEngine, sounds);
-                m_cueBank.UseSameSoundLimiter = m_useSameSoundLimiter;
-                m_cueBank.SetSameSoundLimiter();
-                m_cueBank.DisablePooling = initParams.DisablePooling;
-                m_effectBank = new MyEffectBank(effects, m_audioEngine);
-                m_3Dsounds = new List<IMy3DSoundEmitter>();
-                m_listener = new Listener();
-                m_listener.SetDefaultValues();
-                m_helperEmitter = new Emitter();
-                m_helperEmitter.SetDefaultValues();
-
-                m_musicOn = true;
-                m_gameSoundsOn = true;
-           
-                m_musicAllowed = true;
-
-                if ((m_musicCue != null) && m_musicCue.IsPlaying)
-                {
-                    // restarts music cue
-                    m_musicCue = PlaySound(m_musicCue.CueEnum);
-                    if (m_musicCue != null)
-                    {
-                        m_musicCue.SetOutputVoices(m_musicAudioVoiceDesc);
-                        m_musicAudioVoice.SetVolume(m_volumeMusic * m_globalVolumeLevel);
-                    }
-
-                    UpdateMusic(0);
-                }
-                else
-                {
-                    m_musicState = MyMusicState.Stopped;
-                }
-                m_loopMusic = true;
-
-                m_transitionForward = false;
-                m_timeFromTransitionStart = 0;
-
-                m_soundInstancesTotal2D = 0;
-                m_soundInstancesTotal3D = 0;
-            }
-
-            MyLog.Default.DecreaseIndent();
-            MyLog.Default.WriteLine("MyAudio.LoadData - END");
-        }
-
-        public void SetSameSoundLimiter()
-        {
-            if (m_cueBank != null)
-            {
-                m_cueBank.UseSameSoundLimiter = m_useSameSoundLimiter;
-                m_cueBank.SetSameSoundLimiter();
-            }
-        }
-
-        public void UnloadData()
-        {
-            MyLog.Default.WriteLine("MyAudio.UnloadData - START");
-
-            if (m_3Dsounds != null)
-                m_3Dsounds.Clear();
-
-            if (m_canPlay)
-            {
-                m_audioEngine.StopEngine();
-                if (m_cueBank != null)
-                    m_cueBank.Dispose();
-            }
-
-            SoloCue = null;
-
-            DisposeVoices();
-            //Debug.Assert(m_musicCue == null || m_musicCue.Voice == null || m_musicCue.Voice.IsDisposed);
-            if (m_audioEngine != null)
-            {
-                m_audioEngine.CriticalError -= m_audioEngine_CriticalError;
-                m_audioEngine.Dispose();
-                m_audioEngine = null;
-            }
-
-            m_canPlay = false;
-            m_reverbSet = false;
-
-            MyLog.Default.WriteLine("MyAudio.UnloadData - END");
-        }
-
-        public void ClearSounds()
-        {
-            if (m_cueBank != null)
-                m_cueBank.ClearSounds();
-        }
-
-        public void ReloadData()
-        {
-            UnloadData();
-            LoadData(m_initParams, m_sounds, m_effects);
-        }
-
-        public void ReloadData(ListReader<MySoundData> sounds, ListReader<MyAudioEffect> effects)
-        {
-            UnloadData();
-            LoadData(m_initParams, sounds, effects);
-        }
-
-        public bool ApplyReverb
-        {
-            get
-            {
-                if (!m_canPlay || !m_enableReverb)
-                    return false;
-
-                if (m_cueBank == null)
-                    return false;
-
-                if (m_masterVoice.VoiceDetails.InputSampleRate > MyAudio.MAX_SAMPLE_RATE)
-                    return false;
-
-                return m_applyReverb;
-            }
-            set
-            {
-                if (!m_canPlay || !m_reverbSet)
-                    return;
-
-                if (m_cueBank == null)
-                    return;
-
-                if (!m_enableReverb && !m_applyReverb)
-                    return;
-
-                if (m_gameAudioVoice != null)
-                {
-                    if (value)
-                        m_gameAudioVoice.EnableEffect(0);
-                    else
-                        m_gameAudioVoice.DisableEffect(0);
-                }
-
-                m_cueBank.ApplyReverb = value;
-                m_applyReverb = value;
-            }
-        }
-
-        //  Set/get master volume for all sounds/cues for "Music" category.
-        //  Interval <0..1..2>
-        //      0.0f  ->   -96 dB (silence) 
-        //      1.0f  ->    +0 dB (full pitch as authored) 
-        //      2.0f  ->    +6 dB (6 dB greater than authored) 
-        public float VolumeMusic
-        {
-            get
-            {
-                if (!m_canPlay || !m_musicOn)
-                    return 0;
-
-                return m_volumeMusic;
-            }
-
-            set
-            {
-                if (!m_canPlay || !m_musicOn)
-                    return;
-
-                //  We need to clamp the volume, because app fails if we set it with zero value
-                m_volumeMusic = MathHelper.Clamp(value, MyAudioConstants.MUSIC_MASTER_VOLUME_MIN, MyAudioConstants.MUSIC_MASTER_VOLUME_MAX);
-                m_musicAudioVoice.SetVolume(m_volumeMusic * m_globalVolumeLevel);
-
-                if (OnSetVolumeMusic != null)
-                    OnSetVolumeMusic(m_volumeMusic);
-            }
-        }
-
-        //  Set/get master volume for all sounds/cues in "Gui" category.
-        //  Interval <0..1..2>
-        //      0.0f  ->   -96 dB (silence) 
-        //      1.0f  ->    +0 dB (full pitch as authored) 
-        //      2.0f  ->    +6 dB (6 dB greater than authored) 
-        public float VolumeHud
-        {
-            get
-            {
-                if (!m_canPlay)
-                    return 0;
-
-                return m_volumeHud;
-            }
-
-            set
-            {
-                if (!m_canPlay)
-                    return;
-
-                //  We need to clamp the volume, because app fails if we set it with zero value
-                m_volumeHud = MathHelper.Clamp(value, MyAudioConstants.GAME_MASTER_VOLUME_MIN, MyAudioConstants.GAME_MASTER_VOLUME_MAX);
-                m_hudAudioVoice.SetVolume(m_volumeHud * m_globalVolumeLevel);
-
-                if (OnSetVolumeHud != null)
-                    OnSetVolumeHud(m_volumeHud);
-            }
-        }
-
-        //  Set/get master volume for all in-game sounds/cues.
-        //  Interval <0..1..2>
-        //      0.0f  ->   -96 dB (silence) 
-        //      1.0f  ->    +0 dB (full pitch as authored) 
-        //      2.0f  ->    +6 dB (6 dB greater than authored) 
-        public float VolumeGame
-        {
-            get
-            {
-                if (!m_canPlay || !m_gameSoundsOn)
-                    return 0;
-
-                return m_volumeDefault;
-            }
-
-            set
-            {
-                if (!m_canPlay || !m_gameSoundsOn)
-                    return;
-
-                //  We need to clamp the volume, because app fails if we set it with zero value
-                m_volumeDefault = MathHelper.Clamp(value, MyAudioConstants.GAME_MASTER_VOLUME_MIN, MyAudioConstants.GAME_MASTER_VOLUME_MAX);
-                m_gameAudioVoice.SetVolume(m_volumeDefault * m_globalVolumeLevel);
-
-                if (OnSetVolumeGame != null)
-                    OnSetVolumeGame(m_volumeDefault);
-            }
-        }
-
-        
-        public float VolumeVoiceChat
-        {
-            get
-            {
-                return m_volumeVoiceChat;
-            }
-            set
-            {
-                m_volumeVoiceChat = MathHelper.Clamp(value, MyAudioConstants.VOICE_CHAT_VOLUME_MIN, MyAudioConstants.VOICE_CHAT_VOLUME_MAX);
-            }
-        }
-
-        public bool EnableVoiceChat 
-        { 
-            get 
-            {
-                if (!m_canPlay)
-                    return false;
-                return m_voiceChatEnabled; 
-            } 
-            set 
-            {
-                if (!m_canPlay)
-                    return;
-                if (m_voiceChatEnabled != value)
-                {
-                    m_voiceChatEnabled = value;
-                    if (VoiceChatEnabled != null)
-                        VoiceChatEnabled(m_voiceChatEnabled);
-                }
-            } 
-        }
-
-        public event Action<bool> VoiceChatEnabled;
-
-        public void Pause()
-        {
-            if (m_canPlay)
-                m_audioEngine.StopEngine();
-        }
-
-        public void Resume()
-        {
-            if (m_canPlay)
-                m_audioEngine.StartEngine();
-        }
-
-        public void PauseGameSounds()
-        {
-            if (m_canPlay)
-            {
-                GameSoundIsPaused = true;
-                m_gameAudioVoice.SetVolume(0f);
-                m_canUpdate3dSounds = false;
-                if (m_musicCue != null)
-                    m_musicCue.VolumeMultiplier = 0f;
-            }
-        }
-
-        public void ResumeGameSounds()
-        {
-            if (m_canPlay)
-            {
-                GameSoundIsPaused = false;
-                if (!Mute)
-                    m_gameAudioVoice.SetVolume(m_volumeDefault * m_globalVolumeLevel);
-
-                m_canUpdate3dSounds = true;
-                if (m_musicCue != null)
-                    m_musicCue.VolumeMultiplier = 1f;
-            }
-        }
-
-        public bool Mute
-        {
-            get { return m_mute; }
-            set
-            {
-                if (m_mute != value)
-                {
-                    m_mute = value;
-                    if (m_mute)
-                    {
-                        if (m_canPlay)
-                        {
-                            //TODO: temporary hack SOLVE properly, hud sound issue 
-                            Thread.Sleep(100);
-                            m_gameAudioVoice.SetVolume(0f);
-                            m_musicAudioVoice.SetVolume(0f);
-                            Thread.Sleep(100);
-                        }
-                    }
-                    else
-                    {
-                        if (m_canPlay)
-                        {
-                            if (!GameSoundIsPaused)
-                                m_gameAudioVoice.SetVolume(m_volumeDefault * m_globalVolumeLevel);
-
-                            m_musicAudioVoice.SetVolume(m_volumeMusic * m_globalVolumeLevel);
-                        }
-                    }
-                }
-            }
-        }
-
-        public bool MusicAllowed
-        {
-            get { return m_musicAllowed; }
-            set { m_musicAllowed = value; }
-        }
-
-        public bool IsValidTransitionCategory(MyStringId transitionCategory, MyStringId musicCategory)
-        {
-            return m_canPlay ? m_cueBank.IsValidTransitionCategory(transitionCategory, musicCategory) : false;
-        }
-
-
-        public void PlayMusic(MyMusicTrack? track = null, int priorityForRandom = 0)
-        {
-            if (!m_canPlay || !m_musicAllowed)
-                return;
-            Mute = false;
-            bool playRandom = false;
-            if (track.HasValue)
-            {
-                if (HasAnyTransition())
-                    m_nextTransitions.Clear();
-                if(!m_cueBank.IsValidTransitionCategory(track.Value.TransitionCategory, track.Value.MusicCategory))
-                    playRandom = true;
-                else
-                    ApplyTransition(track.Value.TransitionCategory, 1, track.Value.MusicCategory, false);
-            }
-            else if ((m_musicState == MyMusicState.Stopped) && /*(GetMusicCue() == null) &&*/ !HasAnyTransition())
-            {
-                playRandom = true;
-            }
-            if (playRandom)
-            {
-                var transition = GetRandomTransitionEnum();
-                if (transition.HasValue)
-                    ApplyTransition(transition.Value, priorityForRandom, null, false);
-            }
-        }
-
-        public IMySourceVoice PlayMusicCue(MyCueId musicCue, bool overrideMusicAllowed = false)
-        {
-            if (!m_canPlay || (!m_musicAllowed && !overrideMusicAllowed))
-                return null;
-            Mute = false;
-            m_musicCue = PlaySound(musicCue);
-            if (m_musicCue != null)
-            {
-                m_musicCue.SetOutputVoices(m_musicAudioVoiceDesc);
-                m_musicAudioVoice.SetVolume(m_volumeMusic * m_globalVolumeLevel);
-            }
-            return m_musicCue;
-        }
-
-        public void StopMusic()
-        {
-            m_currentTransition = null;
-            m_nextTransitions.Clear();
-            m_musicState = MyMusicState.Stopped;
-            if (m_musicCue != null)
-            {
-                try
-                {
-                    m_musicCue.Stop();
-                }
-                catch (Exception e)
-                {
-                    MyLog.Default.WriteLine(e);
-                    if (m_audioEngine == null || m_audioEngine.IsDisposed)
-                    {
-                        MyLog.Default.WriteLine("Audio engine disposed!", LoggingOptions.AUDIO);
-                    }
-                }
-            }
-        }
-
-        public void MuteHud(bool mute)
-        {
-            if (m_canPlay)
-                m_hudAudioVoice.SetVolume(mute ? 0f : m_volumeHud * m_globalVolumeLevel);
-        }
-
-        public bool HasAnyTransition()
-        {
-            return m_nextTransitions.Count > 0;
-        }
-
-        internal static string AudioPath
-        {
-            get { return Path.Combine(MyFileSystem.ContentPath, "Audio"); }
-        }
-
-        //  Updates the state of music and 3D audio system.
-        public void Update(int stepSizeInMS, Vector3 listenerPosition, Vector3 listenerUp, Vector3 listenerFront)
-        {
-            if (m_canPlay)
-                CheckIfDeviceChanged();
-
-            if (Mute)
-                return;
-
-            if (m_canPlay && (m_cueBank != null))
-                m_cueBank.Update();
-
-            if (m_canPlay)
-            {
-                m_listener.Position = new SharpDX.Vector3(listenerPosition.X, listenerPosition.Y, listenerPosition.Z);
-                m_listener.OrientTop = new SharpDX.Vector3(listenerUp.X, listenerUp.Y, listenerUp.Z);
-                m_listener.OrientFront = new SharpDX.Vector3(listenerFront.X, listenerFront.Y, listenerFront.Z);
-
-                UpdateMusic(stepSizeInMS);
-                Update3DCuesPositions();
-                m_effectBank.Update(stepSizeInMS);
-                if (m_globalVolumeChanging)
-                    GlobalVolumeUpdate();
-            }
-        }
-
-        private void UpdateMusic(int stepSizeinMS)
-        {
-            if (m_musicState == MyMusicState.Transition)
-            {
-                m_timeFromTransitionStart += stepSizeinMS;
-                // if transition time elapsed, we stop actual playing cue and set music state to stopped
-                if (m_timeFromTransitionStart >= TRANSITION_TIME)
-                {
-                    m_musicState = MyMusicState.Stopped;
-                    if ((m_musicCue != null) && m_musicCue.IsPlaying)
-                    {
-                        m_musicCue.Stop(true);
-                        m_musicCue = null;
-                    }
-                }
-                // we decrease music volume (because transition effect)
-                else if ((m_musicCue != null) && m_musicCue.IsPlaying)
-                {
-                    if ((m_musicAudioVoice.Volume > 0f) && m_musicOn)
-                        m_musicAudioVoice.SetVolume((1f - (float)m_timeFromTransitionStart / TRANSITION_TIME) * m_volumeAtTransitionStart * m_globalVolumeLevel);
-                }
-            }
-
-            if (m_musicState == MyMusicState.Stopped)
-            {
-                MyMusicTransition? nextTransition = GetNextTransition();
-                // we save current transition as next transition, if we want apply transition with higher priority, so after new transition stop, then this old transition return back
-                if ((m_currentTransition != null) && (m_nextTransitions.Count > 0) && (nextTransition != null) && (nextTransition.Value.Priority > m_currentTransition.Value.Priority))
-                    m_nextTransitions[m_currentTransition.Value.Priority] = m_currentTransition.Value;
-
-                m_currentTransition = nextTransition;
-                // it there is current transition to play, we play it and set state to playing
-                if (m_currentTransition != null)
-                {
-                    m_musicAudioVoice.SetVolume(m_volumeMusic * m_globalVolumeLevel);
-                    PlayMusicByTransition(m_currentTransition.Value);
-                    m_nextTransitions.Remove(m_currentTransition.Value.Priority);
-                    m_musicState = MyMusicState.Playing;
-                }
-            }
-
-            if (m_musicState == MyMusicState.Playing)
-            {
-                if ((m_musicCue == null) || !m_musicCue.IsPlaying)
-                {
-                    if (m_loopMusic && m_currentTransition != null)
-                    {
-                        // we play current transition in loop
-                        Debug.Assert(m_currentTransition != null);
-                        PlayMusicByTransition(m_currentTransition.Value);
-                    }
-                    else
-                    {
-                        // switches to another, random, track
-                        m_currentTransition = null;
-                        //MyStringId? newTransitionEnum = GetRandomTransitionEnum();
-                        MyStringId? newTransitionEnum = MyStringId.GetOrCompute("Default");
-                        if (newTransitionEnum.HasValue)
-                            ApplyTransition(newTransitionEnum.Value, 0, null, false);
-                    }
-                }
-            }
-        }
-
-        private static MyStringId NO_RANDOM = MyStringId.GetOrCompute("NoRandom");
-        internal MyStringId? GetRandomTransitionEnum()
-        {
-            if (m_cueBank == null)
-                return null;
-
-            var music = m_cueBank.GetRandomTransitionEnum();
-
-            //TODO: Make flag for this
-            while (music == NO_RANDOM)
-            {
-                music = m_cueBank.GetRandomTransitionEnum();
-            }
-
-            return music;
-        }
-
-        public bool ApplyTransition(MyStringId transitionEnum, int priority = 0, MyStringId? category = null, bool loop = true)
-        {
-            if (!m_canPlay)
-                return false;
-
-            if (!m_musicAllowed)
-                return false;
-
-            Debug.Assert(priority >= 0);
-            if (category.HasValue)
-            {
-                if (category.Value == MyStringId.NullOrEmpty)
-                    category = null;
-                else if (!m_cueBank.IsValidTransitionCategory(transitionEnum, category.Value))
-                {
-                    Debug.Fail("This category doesn't exist for this transition!");
-                    MyLog.Default.WriteLine(string.Format("Category {0} doesn't exist for this transition!", category));
-                    return false;
-                }
-            }
-
-            // if we try apply same transition and priority and category
-            if ((m_currentTransition != null) &&
-                (m_currentTransition.Value.Priority == priority) &&
-                (m_currentTransition.Value.TransitionEnum == transitionEnum) &&
-                ((category == null) || (m_currentTransition.Value.Category == category)))
-            {
-                if ((m_musicState == MyMusicState.Transition) && !m_transitionForward)
-                {
-                    m_musicState = MyMusicState.Playing;
-                    return true;
-                }
-                else
-                    return false;
-            }
-
-            // if category not set, we take random category from transition cues
-            MyStringId transitionCategory = category ?? m_cueBank.GetRandomTransitionCategory(ref transitionEnum, ref NO_RANDOM);
-            // we set this transition as next
-            m_nextTransitions[priority] = new MyMusicTransition(priority, transitionEnum, transitionCategory);
-
-            // if new transition has lower priority then current, we don't want apply new transition now
-            if ((m_currentTransition != null) && (m_currentTransition.Value.Priority > priority))
-                return false;
-
-            m_loopMusic = loop;
-
-            if (m_musicState == MyMusicState.Playing)
-                StartTransition(true);
-            else if (m_musicState == MyMusicState.Transition)
-            {
-            }
-            else if (m_musicState == MyMusicState.Stopped)
-            {
-            }
-            else
-                throw new InvalidBranchException();
-
-            return true;
-        }
-
-        private MyMusicTransition? GetNextTransition()
-        {
-            if (m_nextTransitions.Count > 0)
-                return m_nextTransitions[m_nextTransitions.Keys[m_nextTransitions.Keys.Count - 1]];
-            else
-                return null;
-        }
-
-        private void StartTransition(bool forward)
-        {
-            m_transitionForward = forward;
-            m_musicState = MyMusicState.Transition;
-            m_timeFromTransitionStart = 0;
-            m_volumeAtTransitionStart = m_volumeMusic;
-        }
-
-        internal void StopTransition(int priority)
-        {
-            Debug.Assert(priority >= 0);
-            // try removes transition with this priority from next transitions queue
-            if (m_nextTransitions.ContainsKey(priority))
-                m_nextTransitions.Remove(priority);
-
-            // if we actually play current transition with this priorty, we start transition to next (decreasing volume and switch to another)
-            if ((m_currentTransition != null) && (priority == m_currentTransition.Value.Priority))
-            {
-                if (m_musicState != MyMusicState.Transition)
-                    StartTransition(false);
-            }
-        }
-
-        private void PlayMusicByTransition(MyMusicTransition transition)
-        {
-            if (m_cueBank != null && m_musicAllowed)
-            {
-                m_musicCue = PlaySound(m_cueBank.GetTransitionCue(transition.TransitionEnum, transition.Category));
-                if (m_musicCue != null)
-                {
-                    m_musicCue.SetOutputVoices(m_musicAudioVoiceDesc);
-                    m_musicAudioVoice.SetVolume(m_volumeMusic * m_globalVolumeLevel);
-                }
-            }
-        }
-
-        private float VolumeVariation(MySoundData cue)
-        {
-            return MyUtils.GetRandomFloat(-1f, 1f) * cue.VolumeVariation * 0.07f;
-        }
-
-        private float PitchVariation(MySoundData cue)
-        {
-            return MyUtils.GetRandomFloat(-1f, 1f) * cue.PitchVariation / 100f;
-        }
-
-        public float SemitonesToFrequencyRatio(float semitones)
-        {
-            return XAudio2.SemitonesToFrequencyRatio(semitones);
-        }
-
-        private void Add3DCueToUpdateList(IMy3DSoundEmitter source)
-        {
-            if(!m_3Dsounds.Contains(source))
-                m_3Dsounds.Add(source);
-        }
-
-        public int GetUpdating3DSoundsCount()
-        {
-            return (m_3Dsounds != null) ? m_3Dsounds.Count : 0;
-        }
-
-        public int GetSoundInstancesTotal2D()
-        {
-            return m_soundInstancesTotal2D;
-        }
-
-        public int GetSoundInstancesTotal3D()
-        {
-            return m_soundInstancesTotal3D;
-        }
-
-        private void Update3DCuesState(bool updatePosition = false)
-        {
-            if (!m_canUpdate3dSounds)
-                return;
-
-            if (m_3Dsounds == null)
-                return;
-
-            int counter = 0;
-            lock (m_3Dsounds)
-            {
-                while (counter < m_3Dsounds.Count)
-                {
-                    if (m_3Dsounds[counter].Sound == null)
-                    {
-                        m_3Dsounds.Remove(m_3Dsounds[counter]);
-                    }
-                    else if (!m_3Dsounds[counter].Sound.IsPlaying)
-                    {
-                        m_3Dsounds[counter].Sound = null;
-                        m_3Dsounds.Remove(m_3Dsounds[counter]);
-                    }
-                    else
-                    {
-                        if (updatePosition)
-                            Update3DCuePosition(m_3Dsounds[counter]);
-                        ++counter;
-                    }
-                }
-            }
-        }
-
-        private void Update3DCuesPositions()
-        {
-            if (!m_canPlay)
-                return;
-
-            Update3DCuesState(true);
-        }
-
-        public object CalculateDspSettingsDebug(IMy3DSoundEmitter source)
-        {
-            if (m_cueBank == null) 
-                return null;
-
-            MySoundData cue = m_cueBank.GetCue(source.SoundId);
-            m_helperEmitter.UpdateValuesOmni(source.SourcePosition, source.Velocity, cue, m_deviceDetails.OutputFormat.Channels, source.CustomMaxDistance);
-            DspSettingsRef result = new DspSettingsRef(1, m_deviceDetails.OutputFormat.Channels);
-            DspSettings settings = result.DspSettings;
-            unsafe
-            {
-                m_x3dAudio.Calculate(m_listener, m_helperEmitter, m_calculateFlags, &settings);
-            }
-            return result;
-        }
-
-        private void Update3DCuePosition(IMy3DSoundEmitter source)
-        {
-            if(m_cueBank == null) 
-                return;
-
-            MySoundData cue = m_cueBank.GetCue(source.SoundId);
-            if (cue == null || source.Sound == null)// || !source.Sound.IsBuffered)
-                return;
-
-            var sourceVoice = source.Sound as MySourceVoice;
-            if (sourceVoice == null)
-                return;
-
-            if (!sourceVoice.IsBuffered)
-            {
-                m_helperEmitter.UpdateValuesOmni(source.SourcePosition, source.Velocity, cue, m_deviceDetails.OutputFormat.Channels, source.CustomMaxDistance);
-                float maxDistance = source.CustomMaxDistance.HasValue ? source.CustomMaxDistance.Value : cue.MaxDistance;
-                sourceVoice.distanceToListener = m_x3dAudio.Apply3D(sourceVoice.Voice, m_listener, m_helperEmitter, source.SourceChannels, m_deviceDetails.OutputFormat.Channels, m_calculateFlags, maxDistance, source.Sound.FrequencyRatio, sourceVoice.Silent, !source.Realistic);
-            }
-            else
-            {
-                float maxDistance = source.CustomMaxDistance.Value;
-                m_helperEmitter.UpdateValuesOmni(source.SourcePosition, source.Velocity, maxDistance, m_deviceDetails.OutputFormat.Channels, cue.VolumeCurve);
-                sourceVoice.distanceToListener = m_x3dAudio.Apply3D(sourceVoice.Voice, m_listener, m_helperEmitter, source.SourceChannels, m_deviceDetails.OutputFormat.Channels, m_calculateFlags, maxDistance, sourceVoice.FrequencyRatio, sourceVoice.Silent, !source.Realistic);     
-            }
-        }
-
-        private void StopUpdating3DCue(IMy3DSoundEmitter source)
-        {
-            if (!m_canPlay)
-                return;
-
-            m_3Dsounds.Remove(source);
-        }
-
-        public void StopUpdatingAll3DCues()
-        {
-            if (!m_canPlay)
-                return;
-
-            m_3Dsounds.Clear();
-        }
-
-        public bool SourceIsCloseEnoughToPlaySound(Vector3 sourcePosition, MyCueId cueId, float? customMaxDistance = 0)
-        {
-            if (m_cueBank == null || cueId.Hash == MyStringHash.NullOrEmpty)
-                return false;
-
-            MySoundData cueDefinition = m_cueBank.GetCue(cueId);
-            if (cueDefinition == null)
-                return false;
-
-            float distanceToSound = Vector3.DistanceSquared(new Vector3(m_listener.Position.X, m_listener.Position.Y, m_listener.Position.Z), sourcePosition);
-
-            if (customMaxDistance > 0)
-                return (distanceToSound <= customMaxDistance * customMaxDistance);
-            else if (cueDefinition.UpdateDistance > 0)
-                return (distanceToSound <= cueDefinition.UpdateDistance * cueDefinition.UpdateDistance);
-            else
-                return (distanceToSound <= cueDefinition.MaxDistance * cueDefinition.MaxDistance);
-        }
-
-        internal MySourceVoice PlaySound(MyCueId cueId, IMy3DSoundEmitter source = null, MySoundDimensions type = MySoundDimensions.D2, bool skipIntro = false, bool skipToEnd = false)
-        {
-			int waveNumber = -1;
-			var sound = GetSound(cueId, out waveNumber, source, type);
-			if(source != null)
-				source.LastPlayedWaveNumber = -1;
-			if (sound != null)
-			{
-                sound.Start(skipIntro, skipToEnd);
-				if (source != null)
-					source.LastPlayedWaveNumber = waveNumber;
-			}
-            return sound;
-        }
-
-        internal MySourceVoice GetSound(MyCueId cueId, out int waveNumber, IMy3DSoundEmitter source = null, MySoundDimensions type = MySoundDimensions.D2)
-        {
-			waveNumber = -1;
-            //  If this computer can't play sound, we don't create cues
-            if (cueId.Hash == MyStringHash.NullOrEmpty || !m_canPlay || m_cueBank == null)
-                return null;
-
-            //  If this is one-time cue, we check if it is close enough to hear it and if not, we don't even play - this is for optimization only.
-            //  We must add loopable cues always, because if source of cue comes near the camera, we need to update the position, but of course we can do that only if we have reference to it.
-            MySoundData cue = m_cueBank.GetCue(cueId);
-
-            if ((SoloCue != null) && (SoloCue != cue))
-                return null;
-
-            int waveNumberToIgnore = (source != null ? source.LastPlayedWaveNumber : -1);
-            var sound = m_cueBank.GetVoice(cueId, out waveNumber, type, waveNumberToIgnore);
-            var originalType = type;
-            if (sound == null && source != null && source.Force3D)
-            {
-                originalType = type == MySoundDimensions.D3 ? MySoundDimensions.D2 : MySoundDimensions.D3;
-                sound = m_cueBank.GetVoice(cueId, out waveNumber, originalType, waveNumberToIgnore);
-            }
-            if (sound == null)
-                return null;
-
-            float volume = cue.Volume;
-            if (source != null && source.CustomVolume.HasValue)
-                volume = source.CustomVolume.Value;
-            if (cue.VolumeVariation != 0f)
-            {
-                float variation = VolumeVariation(cue);
-                volume = MathHelper.Clamp(volume + variation, 0f, 1f);
-            }
-            sound.SetVolume(volume);
-            
-            float semitones = cue.Pitch;
-            if (cue.PitchVariation != 0f)
-                semitones += PitchVariation(cue);
-            if (cue.DisablePitchEffects)
-                semitones = 0f;
-            if (semitones != 0f)
-                sound.FrequencyRatio = SemitonesToFrequencyRatio(semitones);
-            else
-                sound.FrequencyRatio = 1f;
-
-            if (cue.IsHudCue)
-                sound.Voice.SetOutputVoices(m_hudAudioVoiceDesc);
-            else
-                sound.Voice.SetOutputVoices(m_gameAudioVoiceDesc);
-
-            if (type == MySoundDimensions.D3)
-            {
-                m_helperEmitter.UpdateValuesOmni(source.SourcePosition, source.Velocity, cue, m_deviceDetails.OutputFormat.Channels, source.CustomMaxDistance);
-                float maxDistance = source.CustomMaxDistance.HasValue ? source.CustomMaxDistance.Value : cue.MaxDistance;
-
-                source.SourceChannels = 1;
-                if (originalType == MySoundDimensions.D2)
-                    source.SourceChannels = 2;
-                sound.distanceToListener = m_x3dAudio.Apply3D(sound.Voice, m_listener, m_helperEmitter, source.SourceChannels, m_deviceDetails.OutputFormat.Channels, m_calculateFlags, maxDistance, sound.FrequencyRatio, sound.Silent, source.Realistic);
-
-                Update3DCuesState();
-
-                // why was this only for loops?
-                //if (sound.IsLoopable)
-                Add3DCueToUpdateList(source);
-
-                ++m_soundInstancesTotal3D;
-            }
-            else
-            {
-                if (m_3Dsounds.Contains(source))
-                    StopUpdating3DCue(source);
-                ++m_soundInstancesTotal2D;
-            }
-            return sound;
-        }
-
-        IMySourceVoice IMyAudio.PlaySound(MyCueId cueId, IMy3DSoundEmitter source, MySoundDimensions type, bool skipIntro, bool skipToEnd)
-        {
-            return PlaySound(cueId, source, type, skipIntro, skipToEnd);
-        }
-
-        IMySourceVoice IMyAudio.GetSound(MyCueId cueId, IMy3DSoundEmitter source, MySoundDimensions type)
-        {
-			int waveNumber;
-            return GetSound(cueId, out waveNumber, source, type);
-        }
-
-        IMySourceVoice IMyAudio.GetSound(IMy3DSoundEmitter source, int sampleRate, int channels, MySoundDimensions dimension)
-        {
-            if (!m_canPlay)
-                return null;
-
-            var waveFormat = new WaveFormat(sampleRate, channels);
-            source.SourceChannels = channels;
-            var sourceVoice = new MySourceVoice(m_audioEngine, waveFormat);
-
-            float volume = source.CustomVolume.HasValue ? source.CustomVolume.Value : 1;
-            float maxDistance = source.CustomMaxDistance.HasValue ? source.CustomMaxDistance.Value : 0;
-
-            sourceVoice.SetVolume(volume);
-
-            if (dimension == MySoundDimensions.D3)
-            {
-                m_helperEmitter.UpdateValuesOmni(source.SourcePosition, source.Velocity, maxDistance, m_deviceDetails.OutputFormat.Channels, MyCurveType.Linear);
-                sourceVoice.distanceToListener = m_x3dAudio.Apply3D(sourceVoice.Voice, m_listener, m_helperEmitter, source.SourceChannels, m_deviceDetails.OutputFormat.Channels, m_calculateFlags, maxDistance, sourceVoice.FrequencyRatio, sourceVoice.Silent, source.Realistic);
-                Update3DCuesState();
-                Add3DCueToUpdateList(source);
-
-                ++m_soundInstancesTotal3D;
-            }
-
-            return sourceVoice;
-        }
-
-        public void WriteDebugInfo(StringBuilder sb)
-        {
-            if(m_cueBank != null)
-                m_cueBank.WriteDebugInfo(sb);
-        }
-
-        public bool IsLoopable(MyCueId cueId)
-        {
-            if (cueId.Hash == MyStringHash.NullOrEmpty || m_cueBank == null)
-                return false;
-            MySoundData cueDefinition = m_cueBank.GetCue(cueId);
-            if (cueDefinition == null)
-                return false;
-
-            return cueDefinition.Loopable;
-        }
-
-        public ListReader<IMy3DSoundEmitter> Get3DSounds()
-        {
-            return m_3Dsounds;
-        }
-
-
-        public IMyAudioEffect ApplyEffect(IMySourceVoice input, MyStringHash effect, MyCueId[] cueIds = null, float? duration = null, bool musicEffect = false)
-        {
-            if (m_effectBank == null)
-                return null;
-			int waveNumber;
-            List<MySourceVoice> voices = new List<MySourceVoice>();
-            if (cueIds != null)
-            {
-                foreach (var cueId in cueIds)
-                {
-                    var sound = GetSound(cueId, out waveNumber);
-                    System.Diagnostics.Debug.Assert(sound != null, "Missing sound " + cueId);
-                    if (sound != null)
-                        voices.Add(sound);
-                }
-            }
-            IMyAudioEffect result = m_effectBank.CreateEffect(input, effect, voices.ToArray(), duration);
-            if (musicEffect && result.OutputSound is MySourceVoice)
-                (result.OutputSound as MySourceVoice).SetOutputVoices(m_musicAudioVoiceDesc);
-            return result;
-        }
+        private delegate void VolumeChangeHandler(float newVolume);
     }
 }

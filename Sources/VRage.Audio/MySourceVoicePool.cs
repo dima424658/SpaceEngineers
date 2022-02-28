@@ -1,299 +1,241 @@
-﻿using SharpDX.Multimedia;
+﻿// Decompiled with JetBrains decompiler
+// Type: VRage.Audio.MySourceVoicePool
+// Assembly: VRage.Audio, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null
+// MVID: EC719E5D-7DA7-4B71-BF8F-7E4B42BD26A2
+// Assembly location: D:\SteamLibrary\steamapps\common\SpaceEngineers\Bin64\VRage.Audio.dll
+
+using SharpDX.Multimedia;
 using SharpDX.XAudio2;
+using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Text;
 using VRage.Collections;
 using VRage.Data.Audio;
+using VRage.Utils;
 
 namespace VRage.Audio
 {
-    public delegate void AudioEngineChanged();
+  internal class MySourceVoicePool
+  {
+    private SharpDX.XAudio2.XAudio2 m_audioEngine;
+    private readonly WaveFormat m_waveFormat;
+    private MyCueBank m_owner;
+    private readonly MyConcurrentQueue<MySourceVoice> m_voicesToRecycle;
+    private readonly MyConcurrentQueue<MySourceVoice> m_availableVoices;
+    private readonly List<MySourceVoicePool.FadeoutData> m_fadingOutVoices;
+    private readonly VoiceSendDescriptor[] m_desc;
+    public bool UseSameSoundLimiter;
+    private int m_currentCount;
+    private const int MAX_COUNT = 128;
+    private readonly ConcurrentDictionary<MySourceVoice, byte> m_allVoices = new ConcurrentDictionary<MySourceVoice, byte>();
+    private readonly List<MySourceVoice> m_voicesToRemove = new List<MySourceVoice>();
+    private readonly List<MySourceVoice> m_distancedVoices = new List<MySourceVoice>();
+    private readonly List<MySourceVoice> m_voicesToDispose = new List<MySourceVoice>();
 
-    class MySourceVoicePool
+    public event AudioEngineChanged OnAudioEngineChanged;
+
+    public WaveFormat WaveFormat => this.m_waveFormat;
+
+    public MySourceVoicePool(
+      SharpDX.XAudio2.XAudio2 audioEngine,
+      WaveFormat waveformat,
+      MyCueBank owner,
+      VoiceSendDescriptor[] desc = null)
     {
-        public XAudio2 m_audioEngine;
-        WaveFormat m_waveFormat;
-        MyCueBank m_owner;
-        MyConcurrentQueue<MySourceVoice> m_availableVoices;
-        List<MySourceVoice> m_fadingOutVoices;
-        public event AudioEngineChanged OnAudioEngineChanged;
-
-        public bool UseSameSoundLimiter = false;
-
-        int m_currentCount;
-        private const int MAX_COUNT = 128;
-#if DEBUG
-        public MyConcurrentHashSet<MySourceVoice> m_debugPlayingList = new MyConcurrentHashSet<MySourceVoice>();
-#endif
-        MyConcurrentHashSet<MySourceVoice> m_allVoices = new MyConcurrentHashSet<MySourceVoice>();
-
-        public WaveFormat WaveFormat { get { return m_waveFormat; } }
-        private List<MySourceVoice> m_voiceBuffer = new List<MySourceVoice>();
-        private List<MySourceVoice> m_voiceBuffer2 = new List<MySourceVoice>();
-        private List<MySourceVoice> m_voicesToRemove = new List<MySourceVoice>();
-        private List<MySourceVoice> m_distancedVoices = new List<MySourceVoice>();
-
-        public MySourceVoicePool(XAudio2 audioEngine, WaveFormat waveformat, MyCueBank owner)
-        {
-            m_audioEngine = audioEngine;
-            m_waveFormat = waveformat;
-            m_owner = owner;
-            m_availableVoices = new MyConcurrentQueue<MySourceVoice>(MAX_COUNT);
-            m_fadingOutVoices = new List<MySourceVoice>();
-            m_currentCount = 0;
-        }
-
-        public void SetAudioEngine(XAudio2 audioEngine)
-        {
-            if (m_audioEngine != audioEngine)
-            {
-                if (OnAudioEngineChanged != null) OnAudioEngineChanged();
-                m_audioEngine = audioEngine;
-                m_availableVoices.Clear();
-                m_fadingOutVoices.Clear();
-                m_currentCount = 0;
-            }
-        }
-
-        internal MySourceVoice NextAvailable()
-        {
-            MySourceVoice voice = null;
-            if (m_owner.DisablePooling || !m_availableVoices.TryDequeue(out voice))
-            {
-                if (m_currentCount < MAX_COUNT)
-                {
-                    voice = new MySourceVoice(this, m_audioEngine, m_waveFormat);
-                    m_allVoices.Add(voice);
-                    m_currentCount++;
-                }
-            }
-#if DEBUG
-            if (voice != null)
-                m_debugPlayingList.Add(voice);
-#endif
-            return voice;
-        }
-
-        public void OnStopPlaying(MySourceVoice voice)
-        {
-#if DEBUG
-            //Debug.Assert(m_debugPlayingList.Contains(voice), string.Format("Debug only. Stopping not playing voice {0}", voice));
-            m_debugPlayingList.Remove(voice);
-#endif
-            m_currentCount--;
-            m_availableVoices.Enqueue(voice);
-        }
-
-        public void Update()
-        {
-            if (m_owner == null || m_audioEngine == null)
-                return;
-            int i;
-            if (m_owner.DisablePooling)
-            {
-                MySourceVoice voice;
-                for (i = 0; i < m_voiceBuffer2.Count; i++)
-                {
-                    m_voiceBuffer2[i].Dispose();
-                }
-                m_voiceBuffer2 = m_voiceBuffer;
-                m_voiceBuffer.Clear();
-                for (i = 0; i < m_availableVoices.Count; i++)
-                    if (m_availableVoices.TryDequeue(out voice))
-                    {
-                        voice.DestroyVoice();
-                        m_voiceBuffer.Add(voice);
-                    }
-            }
-            int id = 0;
-
-            //fading out
-            while (id < m_fadingOutVoices.Count)
-            {
-                MySourceVoice voice = m_fadingOutVoices[id];
-                if (!voice.IsValid)
-                {
-                    m_fadingOutVoices.RemoveAt(id);
-                    //m_fadingOutVoices.Insert(id, m_owner.GetVoice(voice.CueEnum));
-                    //voice = m_fadingOutVoices[id];
-                }
-                else
-                {
-                    if (voice.Voice.Volume < 0.01f)
-                    {
-                        voice.Voice.Stop();
-                        voice.Voice.FlushSourceBuffers(); // triggers voice's BufferEnd event
-                        m_fadingOutVoices.RemoveAt(id);
-                        continue;
-                    }
-                    else
-                        voice.Voice.SetVolume(0.65f * voice.Voice.Volume);
-                }
-
-                ++id;
-            }
-
-            //check for invalid voices
-            m_voicesToRemove.Clear();
-            foreach (MySourceVoice voice in m_allVoices)
-            {
-                if (voice.IsValid == false)
-                    m_voicesToRemove.Add(voice);
-            }
-
-            //remove invalid voices
-            while (m_voicesToRemove.Count > 0)
-            {
-                m_allVoices.Remove(m_voicesToRemove[0]);
-                m_voicesToRemove.RemoveAt(0);
-            }
-
-            //silent sounds playing in large number (sameSoundLimiterCount)
-            if (UseSameSoundLimiter)
-            {
-                //add remaining voices to distance and sort them
-                m_distancedVoices.Clear();
-                foreach (MySourceVoice voice in m_allVoices)
-                {
-                    m_distancedVoices.Add(voice);
-                }
-                m_distancedVoices.Sort(delegate(MySourceVoice x, MySourceVoice y)
-                {
-                    return x.distanceToListener.CompareTo(y.distanceToListener);
-                });
-
-                //silent or un-silent voices
-                MyCueId currentCueId;
-                int j,limit;
-                MySoundData cueDefinition;
-                while (m_distancedVoices.Count > 0)
-                {
-                    currentCueId = m_distancedVoices[0].CueEnum;
-                    i = 0;
-                    cueDefinition = MyAudio.Static.GetCue(currentCueId);
-                    limit = cueDefinition != null ? cueDefinition.SoundLimit : 0;
-                    for (j = 0; j < m_distancedVoices.Count; j++)
-                    {
-                        if (m_distancedVoices[j].CueEnum.Equals(currentCueId))
-                        {
-                            i++;
-                            if (limit > 0 && i > limit)
-                                m_distancedVoices[j].Silent = true;
-                            else
-                                m_distancedVoices[j].Silent = false;
-                            m_distancedVoices.RemoveAt(j);
-                            j--;
-                        }
-                    }
-                }
-            }
-        }
-
-        public void AddToFadeoutList(MySourceVoice voice)
-        {
-            m_fadingOutVoices.Add(voice);
-        }
-
-        public void StopAll()
-        {
-            foreach (var v in m_allVoices)
-            {
-                v.Stop(true);
-            }
-        }
-
-        public void Dispose()
-        {
-            m_availableVoices.Clear();
-            m_fadingOutVoices.Clear();
-            m_currentCount = 0;
-            m_audioEngine = null;
-            m_owner = null;
-            foreach(var v in m_allVoices)
-            {
-                v.Cleanup();
-                m_voiceBuffer.Add(v);
-            }
-            m_allVoices.Clear();
-        }
-
-#if DEBUG
-        public override string ToString()
-        {
-            return string.Format("MySourceVoicePool [{0}-{1}-{2}] - voices count: {3}/{4}", m_waveFormat.Encoding, m_waveFormat.Channels, m_waveFormat.SampleRate, m_currentCount, MAX_COUNT);
-        }
-#endif //DEBUG
-
-        //        public void Dispose()
-        //        {
-        //            foreach (MySourceVoice voice in m_playingVoices)
-        //            {
-        //                m_availableVoices.Enqueue(voice);
-        //            }
-        //            m_playingVoices.Clear();
-        //
-        //#if DEBUG
-        //            MyLog.Default.WriteLine(this.ToString());
-        //#endif //DEBUG
-        //
-        //            while (m_availableVoices.Count > 0)
-        //            {
-        //                MySourceVoice voice = m_availableVoices.Dequeue();
-        //                if (voice.Voice != null)
-        //                {
-        //                    voice.Voice.DestroyVoice();
-        //                    voice.Voice.Dispose();
-        //                }
-        //            }
-        //        }
-
-        public void WritePlayingDebugInfo(StringBuilder stringBuilder)
-        {
-#if DEBUG
-            int id = 0;
-            foreach(var item in m_debugPlayingList)
-            {
-                if (item.IsPlaying && !item.IsPaused && !item.Silent && item.VolumeMultiplier != 0f)
-                {
-                    if(id > 0)
-                        stringBuilder.Append(", ");
-                    if (id % 5 == 0 && id > 0)
-                        stringBuilder.AppendLine();
-                    stringBuilder.Append(item.CueEnum.ToString() + " ").AppendDecimal(item.Volume*item.VolumeMultiplier, 2);
-                    id++;
-                }
-            }
-
-            if(id > 0)
-                stringBuilder.AppendLine();
-#endif
-        }
-
-        public void WritePausedDebugInfo(StringBuilder stringBuilder)
-        {
-#if DEBUG
-            int id = 0;
-            foreach(var item in m_debugPlayingList)
-            {
-                if (item.IsPlaying && (item.IsPaused || item.Silent || item.VolumeMultiplier == 0f))
-                {
-                    if (id > 0)
-                        stringBuilder.Append(", ");
-                    if (id % 4 == 0 && id > 0)
-                        stringBuilder.AppendLine();
-                    stringBuilder.Append(item.CueEnum.ToString() + " ");
-                    if (item.Silent)
-                        stringBuilder.Append("LIM");
-                    else if (item.VolumeMultiplier == 0f)
-                        stringBuilder.Append("SIL");
-                    else
-                        stringBuilder.Append("PAU");
-                    id++;
-                }
-            }
-            if (id > 0)
-                stringBuilder.AppendLine();
-#endif
-        }
+      this.m_audioEngine = audioEngine;
+      this.m_waveFormat = waveformat;
+      this.m_owner = owner;
+      this.m_voicesToRecycle = new MyConcurrentQueue<MySourceVoice>(20);
+      this.m_availableVoices = new MyConcurrentQueue<MySourceVoice>(128);
+      this.m_fadingOutVoices = new List<MySourceVoicePool.FadeoutData>();
+      this.m_currentCount = 0;
+      this.m_desc = desc;
     }
+
+    public void SetAudioEngine(SharpDX.XAudio2.XAudio2 audioEngine)
+    {
+      if (this.m_audioEngine == audioEngine)
+        return;
+      AudioEngineChanged audioEngineChanged = this.OnAudioEngineChanged;
+      if (audioEngineChanged != null)
+        audioEngineChanged();
+      this.m_audioEngine = audioEngine;
+      this.m_voicesToRecycle.Clear();
+      this.m_availableVoices.Clear();
+      this.m_fadingOutVoices.Clear();
+      this.m_currentCount = 0;
+    }
+
+    internal MySourceVoice NextAvailable()
+    {
+      if (this.m_audioEngine == null)
+        return (MySourceVoice) null;
+      MySourceVoice instance = (MySourceVoice) null;
+      if ((this.m_owner.DisablePooling || !this.m_availableVoices.TryDequeue(out instance)) && this.m_allVoices.Count < 128)
+      {
+        instance = new MySourceVoice(this, this.m_audioEngine, this.m_waveFormat);
+        if (this.m_desc != null)
+          instance.SetOutputVoices(this.m_desc);
+        this.m_allVoices.TryAdd(instance, (byte) 0);
+        ++this.m_currentCount;
+      }
+      return instance;
+    }
+
+    public void OnStopPlaying(MySourceVoice voice)
+    {
+      --this.m_currentCount;
+      this.m_voicesToRecycle.Enqueue(voice);
+    }
+
+    public void Update()
+    {
+      if (this.m_owner == null || this.m_audioEngine == null)
+        return;
+      if (this.m_owner.DisablePooling)
+      {
+        foreach (MySourceVoice mySourceVoice in this.m_voicesToDispose)
+          mySourceVoice.Dispose();
+        this.m_voicesToDispose.Clear();
+        MySourceVoice instance;
+        while (this.m_voicesToRecycle.TryDequeue(out instance))
+        {
+          instance.CleanupBeforeDispose();
+          this.m_voicesToDispose.Add(instance);
+        }
+      }
+      else
+      {
+        MySourceVoice instance;
+        while (this.m_voicesToRecycle.TryDequeue(out instance))
+        {
+          instance.Emitter = (IMy3DSoundEmitter) null;
+          this.m_availableVoices.Enqueue(instance);
+        }
+      }
+      int index1 = 0;
+      while (index1 < this.m_fadingOutVoices.Count)
+      {
+        MySourceVoicePool.FadeoutData fadingOutVoice = this.m_fadingOutVoices[index1];
+        MySourceVoice voice = fadingOutVoice.Voice;
+        if (!voice.IsValid)
+        {
+          this.m_fadingOutVoices.RemoveAt(index1);
+        }
+        else
+        {
+          if (fadingOutVoice.RemainingSteps == 0)
+          {
+            voice.Voice.Stop();
+            voice.Voice.FlushSourceBuffers();
+            this.m_fadingOutVoices.RemoveAt(index1);
+            continue;
+          }
+          float volumeRef;
+          voice.Voice.GetVolume(out volumeRef);
+          voice.Voice.SetVolume(volumeRef * 0.65f);
+          --fadingOutVoice.RemainingSteps;
+          this.m_fadingOutVoices[index1] = fadingOutVoice;
+        }
+        ++index1;
+      }
+      this.m_voicesToRemove.Clear();
+      foreach (MySourceVoice key in (IEnumerable<MySourceVoice>) this.m_allVoices.Keys)
+      {
+        if (!key.IsValid)
+          this.m_voicesToRemove.Add(key);
+      }
+      while (this.m_voicesToRemove.Count > 0)
+      {
+        this.m_allVoices.Remove<MySourceVoice, byte>(this.m_voicesToRemove[0]);
+        this.m_voicesToRemove.RemoveAt(0);
+      }
+      if (!this.UseSameSoundLimiter)
+        return;
+      this.m_distancedVoices.Clear();
+      foreach (MySourceVoice key in (IEnumerable<MySourceVoice>) this.m_allVoices.Keys)
+        this.m_distancedVoices.Add(key);
+      this.m_distancedVoices.Sort((Comparison<MySourceVoice>) ((x, y) => x.DistanceToListener.CompareTo(y.DistanceToListener)));
+      while (this.m_distancedVoices.Count > 0)
+      {
+        MyCueId cueEnum = this.m_distancedVoices[0].CueEnum;
+        int num1 = 0;
+        MySoundData cue = MyAudio.Static.GetCue(cueEnum);
+        int num2 = cue != null ? cue.SoundLimit : 0;
+        for (int index2 = 0; index2 < this.m_distancedVoices.Count; ++index2)
+        {
+          if (this.m_distancedVoices[index2].CueEnum.Equals(cueEnum))
+          {
+            ++num1;
+            this.m_distancedVoices[index2].Silent = num2 > 0 && num1 > num2;
+            this.m_distancedVoices.RemoveAt(index2);
+            --index2;
+          }
+        }
+      }
+    }
+
+    public void AddToFadeoutList(MySourceVoice voice) => this.m_fadingOutVoices.Add(new MySourceVoicePool.FadeoutData(voice));
+
+    public void StopAll()
+    {
+      foreach (MySourceVoice key in (IEnumerable<MySourceVoice>) this.m_allVoices.Keys)
+        key.Stop(true);
+    }
+
+    public void Dispose()
+    {
+      this.m_availableVoices.Clear();
+      this.m_fadingOutVoices.Clear();
+      this.m_currentCount = 0;
+      this.m_audioEngine = (SharpDX.XAudio2.XAudio2) null;
+      this.m_owner = (MyCueBank) null;
+      foreach (MySourceVoice key in (IEnumerable<MySourceVoice>) this.m_allVoices.Keys)
+      {
+        key.CleanupBeforeDispose();
+        this.m_voicesToDispose.Add(key);
+      }
+      this.m_allVoices.Clear();
+      foreach (MySourceVoice mySourceVoice in this.m_voicesToDispose)
+        mySourceVoice.Dispose();
+      this.m_voicesToDispose.Clear();
+    }
+
+    public void WritePlayingDebugInfo(StringBuilder stringBuilder)
+    {
+    }
+
+    public void WritePausedDebugInfo(StringBuilder stringBuilder)
+    {
+    }
+
+    private struct FadeoutData
+    {
+      public const float TargetVolume = 0.01f;
+      public const float VolumeMultiplierPerStep = 0.65f;
+      public int RemainingSteps;
+      public readonly MySourceVoice Voice;
+
+      public FadeoutData(MySourceVoice voice)
+      {
+        if (voice == null || voice.Voice == null)
+        {
+          MyLog.Default.WriteLine("FadeoutData initialized with " + (voice == null ? "MySourceVoice == null." : "MySourceVoice having SourceVoice null."));
+          this.Voice = voice;
+          this.RemainingSteps = 0;
+        }
+        else
+        {
+          this.Voice = voice;
+          float volumeRef;
+          voice.Voice.GetVolume(out volumeRef);
+          if ((double) volumeRef <= 0.00999999977648258)
+            this.RemainingSteps = 0;
+          else
+            this.RemainingSteps = (int) Math.Log(0.00999999977648258 / (double) volumeRef, 0.649999976158142);
+        }
+      }
+    }
+  }
 }
