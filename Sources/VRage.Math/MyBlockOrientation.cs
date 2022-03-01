@@ -12,10 +12,10 @@ namespace VRageMath
     {
         public static readonly MyBlockOrientation Identity = new MyBlockOrientation(Base6Directions.Direction.Forward, Base6Directions.Direction.Up);
 
-        [ProtoMember]
+        [ProtoMember(1)]
         public Base6Directions.Direction Forward;
         
-        [ProtoMember]
+        [ProtoMember(4)]
         public Base6Directions.Direction Up;
 
         public Base6Directions.Direction Left

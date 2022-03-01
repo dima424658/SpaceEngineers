@@ -17,22 +17,22 @@ namespace VRageMath
         /// <summary>
         /// Specifies the x-value of the vector component of the quaternion.
         /// </summary>
-        [ProtoBuf.ProtoMember]
+        [ProtoBuf.ProtoMember(1)]
         public double X;
         /// <summary>
         /// Specifies the y-value of the vector component of the quaternion.
         /// </summary>
-        [ProtoBuf.ProtoMember]
+        [ProtoBuf.ProtoMember(4)]
         public double Y;
         /// <summary>
         /// Specifies the z-value of the vector component of the quaternion.
         /// </summary>
-        [ProtoBuf.ProtoMember]
+        [ProtoBuf.ProtoMember(7)]
         public double Z;
         /// <summary>
         /// Specifies the rotation component of the quaternion.
         /// </summary>
-        [ProtoBuf.ProtoMember]
+        [ProtoBuf.ProtoMember(10)]
         public double W;
 
         static QuaternionD()

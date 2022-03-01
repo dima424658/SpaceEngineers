@@ -8,13 +8,13 @@ namespace VRageMath
     [ProtoBuf.ProtoContract]
     public struct Vector4I : IComparable<Vector4I>
     {
-        [ProtoBuf.ProtoMember]
+        [ProtoBuf.ProtoMember(1)]
         public int X;
-        [ProtoBuf.ProtoMember]
+        [ProtoBuf.ProtoMember(4)]
         public int Y;
-        [ProtoBuf.ProtoMember]
+        [ProtoBuf.ProtoMember(7)]
         public int Z;
-        [ProtoBuf.ProtoMember]
+        [ProtoBuf.ProtoMember(10)]
         public int W;
 
         public Vector4I(int x, int y, int z, int w)

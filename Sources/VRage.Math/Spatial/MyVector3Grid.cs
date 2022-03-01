@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
 using System.Text;
+using VRage.Library.Collections;
 
 namespace VRageMath.Spatial
 {
@@ -155,7 +156,7 @@ namespace VRageMath.Spatial
 
         private int m_count;
 
-        List<Entry> m_storage;
+        MyList<MyVector3Grid<T>.Entry> m_storage;
         Dictionary<Vector3I, int> m_bins;
 
         private IEqualityComparer<T> m_equalityComparer;
@@ -170,7 +171,7 @@ namespace VRageMath.Spatial
             m_cellSize = cellSize;
             m_divisor = 1.0f / m_cellSize;
 
-            m_storage = new List<Entry>();
+            m_storage = new MyList<MyVector3Grid<T>.Entry>();
             m_bins = new Dictionary<Vector3I, int>();
 
             m_equalityComparer = comparer;
@@ -193,7 +194,7 @@ namespace VRageMath.Spatial
         {
             m_nextFreeEntry = 0;
             m_count = 0;
-            m_storage.SetSize(0);
+            m_storage.ClearFast();
             m_bins.Clear();
         }
 

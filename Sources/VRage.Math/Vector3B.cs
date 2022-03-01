@@ -9,11 +9,11 @@ namespace VRageMath
     [ProtoBuf.ProtoContract]
     public struct Vector3B
     {
-        [ProtoBuf.ProtoMember]
+        [ProtoBuf.ProtoMember(1)]
         public sbyte X;
-        [ProtoBuf.ProtoMember]
+        [ProtoBuf.ProtoMember(3)]
         public sbyte Y;
-        [ProtoBuf.ProtoMember]
+        [ProtoBuf.ProtoMember(7)]
         public sbyte Z;
 
         public static readonly Vector3B Zero = new Vector3B();

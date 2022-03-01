@@ -1,8 +1,4 @@
-﻿using System;
-using System.Collections.Generic;
-
-
-namespace VRageMath
+﻿namespace VRageMath
 {
     // Bounding volume using an oriented bounding box.
     public struct MyOrientedBoundingBox : IEquatable<MyOrientedBoundingBox>
@@ -296,7 +292,7 @@ namespace VRageMath
             return (Center == other.Center && HalfExtent == other.HalfExtent && Orientation == other.Orientation);
         }
 
-        public override bool Equals(Object obj)
+        public override bool Equals(Object? obj)
         {
             if (obj != null && obj is MyOrientedBoundingBox)
             {

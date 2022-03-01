@@ -1,77 +1,65 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Runtime.InteropServices;
-using System.Text;
+﻿using System.Collections;
 
 namespace VRageMath
 {
-    public unsafe struct BoxCornerEnumerator : IEnumerator<Vector3>, IEnumerable<Vector3>
+    public struct BoxCornerEnumerator :
+      IEnumerator<Vector3>,
+      IEnumerator,
+      IDisposable,
+      IEnumerable<Vector3>,
+      IEnumerable
     {
-        struct TwoVectors
+        private static Vector3B[] m_indicesCache = new Vector3B[]
         {
-            public Vector3 Min;
-            public Vector3 Max;
-        }
+            new Vector3B(0, 4, 5),
+            new Vector3B(3, 4, 5),
+            new Vector3B(3, 1, 5),
+            new Vector3B(0, 1, 5),
+            new Vector3B(0, 4, 2),
+            new Vector3B(3, 4, 2),
+            new Vector3B(3, 1, 2),
+            new Vector3B(0, 1, 2)
+        };
+        private int m_index;
+        private unsafe fixed float m_minMax[6];
 
-        static Vector3B* m_indices;
-
-        static BoxCornerEnumerator()
+        public unsafe BoxCornerEnumerator(Vector3 min, Vector3 max)
         {
-            m_indices = (Vector3B*)(void*)Marshal.AllocHGlobal(sizeof(byte) * 3 * 8);
-            m_indices[0] = new Vector3B(0, 4, 5);
-            m_indices[1] = new Vector3B(3, 4, 5);
-            m_indices[2] = new Vector3B(3, 1, 5);
-            m_indices[3] = new Vector3B(0, 1, 5);
-            m_indices[4] = new Vector3B(0, 4, 2);
-            m_indices[5] = new Vector3B(3, 4, 2);
-            m_indices[6] = new Vector3B(3, 1, 2);
-            m_indices[7] = new Vector3B(0, 1, 2);
-        }
-
-        TwoVectors m_minMax;
-        int m_index;
-
-        public BoxCornerEnumerator(Vector3 min, Vector3 max)
-        {
-            m_minMax.Min = min;
-            m_minMax.Max = max;
+            for (int i = 0; i < 3; ++i)
+            {
+                m_minMax[i] = min.GetDim(i);
+                m_minMax[i + 3] = max.GetDim(i);
+            }
             m_index = -1;
         }
 
-        public Vector3 Current
+        public void Add(object tmp)
+        {
+        }
+
+        public unsafe Vector3 Current
         {
             get
             {
-                TwoVectors minMax = m_minMax;
-                float* ptr = (float*)&minMax;
-                var ind = m_indices[m_index];
-                return new Vector3(ptr[ind.X], ptr[ind.Y], ptr[ind.Z]);
+                Vector3B vector3B = m_indicesCache[m_index];
+                return new Vector3(m_minMax[vector3B.X], m_minMax[vector3B.Y], m_minMax[vector3B.Z]);
             }
         }
 
-        public bool MoveNext()
+        public bool MoveNext() => ++m_index < 8;
+
+        void IDisposable.Dispose()
         {
-            return ++m_index < 8;
         }
 
-        void IDisposable.Dispose() { }
-        object System.Collections.IEnumerator.Current { get { return Current; } }
-        void System.Collections.IEnumerator.Reset() { m_index = -1; }
+        object IEnumerator.Current => Current;
 
-        public BoxCornerEnumerator GetEnumerator()
-        {
-            return this;
-        }
+        void IEnumerator.Reset() => m_index = -1;
 
-        IEnumerator<Vector3> IEnumerable<Vector3>.GetEnumerator()
-        {
-            return this;
-        }
+        public BoxCornerEnumerator GetEnumerator() => this;
 
-        System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator()
-        {
-            return this;
-        }
+        IEnumerator<Vector3> IEnumerable<Vector3>.GetEnumerator() => this;
+
+        IEnumerator IEnumerable.GetEnumerator() => this;
     }
 }

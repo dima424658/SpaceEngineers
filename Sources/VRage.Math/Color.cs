@@ -8,13 +8,12 @@ namespace VRageMath
     /// Represents a four-component color using red, green, blue, and alpha data.
     /// </summary>
     [ProtoBuf.ProtoContract, Serializable]
-	[Unsharper.UnsharperDisableReflection()]
     public struct Color : IPackedVector<uint>, IPackedVector, IEquatable<Color>
     {
         /// <summary>
         /// Gets the current color as a packed value.
         /// </summary>
-        [ProtoBuf.ProtoMember]
+        [ProtoBuf.ProtoMember(1)]
         public uint PackedValue;
 
         /// <summary>

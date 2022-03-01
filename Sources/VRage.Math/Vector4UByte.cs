@@ -8,13 +8,13 @@ namespace VRageMath
     [ProtoBuf.ProtoContract]
     public struct Vector4UByte
     {
-        [ProtoBuf.ProtoMember]
+        [ProtoBuf.ProtoMember(1)]
         public byte X;
-        [ProtoBuf.ProtoMember]
+        [ProtoBuf.ProtoMember(4)]
         public byte Y;
-        [ProtoBuf.ProtoMember]
+        [ProtoBuf.ProtoMember(7)]
         public byte Z;
-        [ProtoBuf.ProtoMember]
+        [ProtoBuf.ProtoMember(10)]
         public byte W;
 
         public Vector4UByte(byte x, byte y, byte z, byte w)

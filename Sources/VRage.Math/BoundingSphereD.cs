@@ -1,6 +1,4 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Globalization;
+﻿using System.Globalization;
 
 namespace VRageMath
 {
@@ -66,11 +64,11 @@ namespace VRageMath
         /// Determines whether the specified Object is equal to the BoundingSphereD.
         /// </summary>
         /// <param name="obj">The Object to compare with the current BoundingSphereD.</param>
-        public override bool Equals(object obj)
+        public override bool Equals(object? obj)
         {
             bool flag = false;
             if (obj is BoundingSphereD)
-                flag = this.Equals((BoundingSphereD)obj);
+                flag = Equals((BoundingSphereD)obj);
             return flag;
         }
 

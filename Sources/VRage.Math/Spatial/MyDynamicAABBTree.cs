@@ -1,11 +1,7 @@
-﻿#region Using Statements
-
-using System;
+﻿using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using VRage;
-
-#endregion
+using System.Diagnostics;
 
 namespace VRageMath
 {

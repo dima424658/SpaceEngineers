@@ -19,12 +19,12 @@ namespace VRageMath
         /// <summary>
         /// The minimum point the BoundingBox contains.
         /// </summary>
-        [ProtoBuf.ProtoMember]
+        [ProtoBuf.ProtoMember(1)]
         public Vector3D Min;
         /// <summary>
         /// The maximum point the BoundingBox contains.
         /// </summary>
-        [ProtoBuf.ProtoMember]
+        [ProtoBuf.ProtoMember(4)]
         public Vector3D Max;
 
         /// <summary>
@@ -121,7 +121,6 @@ namespace VRageMath
         /// Gets the array of points that make up the corners of the BoundingBox.
         /// </summary>
         /// <param name="corners">An existing array of at least 8 Vector3 points where the corners of the BoundingBox are written.</param>
-		[Unsharper.UnsharperDisableReflection()]
 		public unsafe void GetCornersUnsafe(Vector3D* corners)
         {
             corners[0].X = this.Min.X;
@@ -165,7 +164,7 @@ namespace VRageMath
         /// Determines whether two instances of BoundingBox are equal.
         /// </summary>
         /// <param name="obj">The Object to compare with the current BoundingBox.</param>
-        public override bool Equals(object obj)
+        public override bool Equals(object? obj)
         {
             bool flag = false;
             if (obj is BoundingBoxD)

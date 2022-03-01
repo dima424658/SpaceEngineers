@@ -47,98 +47,82 @@ namespace VRageMath
         /// <summary>
         /// Value at row 1 column 1 of the matrix.
         /// </summary>
-        [FieldOffset(0)]
-        [ProtoBuf.ProtoMember]
+        [FieldOffset(0), ProtoBuf.ProtoMember(1)]
         public float M11;
         /// <summary>
         /// Value at row 1 column 2 of the matrix.
         /// </summary>
-        [FieldOffset(4)]
-        [ProtoBuf.ProtoMember]
+        [FieldOffset(4), ProtoBuf.ProtoMember(4)]
         public float M12;
         /// <summary>
         /// Value at row 1 column 3 of the matrix.
         /// </summary>
-        [FieldOffset(8)]
-        [ProtoBuf.ProtoMember]
+        [FieldOffset(8), ProtoBuf.ProtoMember(7)]
         public float M13;
         /// <summary>
         /// Value at row 1 column 4 of the matrix.
         /// </summary>
-        [FieldOffset(12)]
-        [ProtoBuf.ProtoMember]
+        [FieldOffset(12), ProtoBuf.ProtoMember(10)]
         public float M14;
         /// <summary>
         /// Value at row 2 column 1 of the matrix.
         /// </summary>
-        [FieldOffset(16)]
-        [ProtoBuf.ProtoMember]
+        [FieldOffset(16), ProtoBuf.ProtoMember(13)]
         public float M21;
         /// <summary>
         /// Value at row 2 column 2 of the matrix.
         /// </summary>
-        [FieldOffset(20)]
-        [ProtoBuf.ProtoMember]
+        [FieldOffset(20), ProtoBuf.ProtoMember(16)]
         public float M22;
         /// <summary>
         /// Value at row 2 column 3 of the matrix.
         /// </summary>
-        [FieldOffset(24)]
-        [ProtoBuf.ProtoMember]
+        [FieldOffset(24), ProtoBuf.ProtoMember(19)]
         public float M23;
         /// <summary>
         /// Value at row 2 column 4 of the matrix.
         /// </summary>
-        [FieldOffset(28)]
-        [ProtoBuf.ProtoMember]
+        [FieldOffset(28), ProtoBuf.ProtoMember(22)]
         public float M24;
         /// <summary>
         /// Value at row 3 column 1 of the matrix.
         /// </summary>
-        [FieldOffset(32)]
-        [ProtoBuf.ProtoMember]
+        [FieldOffset(32), ProtoBuf.ProtoMember(25)]
         public float M31;
         /// <summary>
         /// Value at row 3 column 2 of the matrix.
         /// </summary>
-        [FieldOffset(36)]
-        [ProtoBuf.ProtoMember]
+        [FieldOffset(36), ProtoBuf.ProtoMember(28)]
         public float M32;
         /// <summary>
         /// Value at row 3 column 3 of the matrix.
         /// </summary>
-        [FieldOffset(40)]
-        [ProtoBuf.ProtoMember]
+        [FieldOffset(40), ProtoBuf.ProtoMember(31)]
         public float M33;
         /// <summary>
         /// Value at row 3 column 4 of the matrix.
         /// </summary>
-        [FieldOffset(44)]
-        [ProtoBuf.ProtoMember]
+        [FieldOffset(44), ProtoBuf.ProtoMember(34)]
         public float M34;
         /// <summary>
         /// Value at row 4 column 1 of the matrix.
         /// </summary>
-        [FieldOffset(48)]
-        [ProtoBuf.ProtoMember]
+        [FieldOffset(48), ProtoBuf.ProtoMember(37)]
         public float M41;
         /// <summary>
         /// Value at row 4 column 2 of the matrix.
         /// </summary>
-        [FieldOffset(52)]
-        [ProtoBuf.ProtoMember]
+        [FieldOffset(52), ProtoBuf.ProtoMember(40)]
         public float M42;
         /// <summary>
         /// Value at row 4 column 3 of the matrix.
         /// </summary>
-        [FieldOffset(56)]
-        [ProtoBuf.ProtoMember]
+        [FieldOffset(56), ProtoBuf.ProtoMember(43)]
         public float M43;
         /// <summary>
         /// Value at row 4 column 4 of the matrix.
         /// </summary>
-        [FieldOffset(60)]
-        [ProtoBuf.ProtoMember]
+        [FieldOffset(60), ProtoBuf.ProtoMember(46)]
         public float M44;
 
         /// <summary>
@@ -422,7 +406,6 @@ namespace VRageMath
         /// <summary>
         /// Same result as Matrix.CreateScale(scale) * matrix, but much faster
         /// </summary>
-		[Unsharper.UnsharperDisableReflection()]
         public static void Rescale(ref Matrix matrix, float scale)
         {
             matrix.M11 *= scale;
@@ -441,7 +424,6 @@ namespace VRageMath
         /// <summary>
         /// Same result as Matrix.CreateScale(scale) * matrix, but much faster
         /// </summary>
-		[Unsharper.UnsharperDisableReflection()]
         public static void Rescale(ref Matrix matrix, ref Vector3 scale)
         {
             matrix.M11 *= scale.X;
@@ -457,14 +439,12 @@ namespace VRageMath
             matrix.M33 *= scale.Z;
         }
 
-		[Unsharper.UnsharperDisableReflection()]
         public static Matrix Rescale(Matrix matrix, float scale)
         {
             Rescale(ref matrix, scale);
             return matrix;
         }
 
-		[Unsharper.UnsharperDisableReflection()]
         public static Matrix Rescale(Matrix matrix, Vector3 scale)
         {
             Rescale(ref matrix, ref scale);
@@ -3495,7 +3475,7 @@ return flag;
 
         public bool IsValid()
         {
-            return (M11 + M12 + M13 + M14 + M21 + M22 + M23 + M24 + M31 + M32 + M33 + M34 + M41 + M42 + M43 + M44).IsValid();
+            return float.IsFinite(M11 + M12 + M13 + M14 + M21 + M22 + M23 + M24 + M31 + M32 + M33 + M34 + M41 + M42 + M43 + M44);
         }
 
         public bool IsNan()

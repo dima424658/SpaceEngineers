@@ -17,12 +17,12 @@ namespace VRageMath
         /// <summary>
         /// The minimum point the BoundingBox2I contains.
         /// </summary>
-        [ProtoMember]
+        [ProtoMember(1)]
         public Vector2I Min;
         /// <summary>
         /// The maximum point the BoundingBox2I contains.
         /// </summary>
-        [ProtoMember]
+        [ProtoMember(4)]
         public Vector2I Max;
 
         /// <summary>
@@ -152,7 +152,7 @@ namespace VRageMath
         /// Determines whether two instances of BoundingBox2I are equal.
         /// </summary>
         /// <param name="obj">The Object to compare with the current BoundingBox2I.</param>
-        public override bool Equals(object obj)
+        public override bool Equals(object? obj)
         {
             bool flag = false;
             if (obj is BoundingBox2I)

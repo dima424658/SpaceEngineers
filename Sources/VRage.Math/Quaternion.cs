@@ -15,22 +15,22 @@ namespace VRageMath
         /// <summary>
         /// Specifies the x-value of the vector component of the quaternion.
         /// </summary>
-        [ProtoBuf.ProtoMember]
+        [ProtoBuf.ProtoMember(1)]
         public float X;
         /// <summary>
         /// Specifies the y-value of the vector component of the quaternion.
         /// </summary>
-        [ProtoBuf.ProtoMember]
+        [ProtoBuf.ProtoMember(4)]
         public float Y;
         /// <summary>
         /// Specifies the z-value of the vector component of the quaternion.
         /// </summary>
-        [ProtoBuf.ProtoMember]
+        [ProtoBuf.ProtoMember(7)]
         public float Z;
         /// <summary>
         /// Specifies the rotation component of the quaternion.
         /// </summary>
-        [ProtoBuf.ProtoMember]
+        [ProtoBuf.ProtoMember(10)]
         public float W;
 
         public Vector3 Forward
@@ -603,6 +603,54 @@ namespace VRageMath
         public static void CreateFromRotationMatrix(ref MatrixD matrix, out Quaternion result)
         {
             Matrix m = (Matrix)matrix;
+            CreateFromRotationMatrix(ref m, out result);
+        }
+        public static Quaternion CreateFromRotationMatrix(Matrix3x3 matrix)
+        {
+            float num1 = matrix.M11 + matrix.M22 + matrix.M33;
+            Quaternion quaternion = new Quaternion();
+            if ((double)num1 > 0.0)
+            {
+                float num2 = (float)Math.Sqrt((double)num1 + 1.0);
+                quaternion.W = num2 * 0.5f;
+                float num3 = 0.5f / num2;
+                quaternion.X = (matrix.M23 - matrix.M32) * num3;
+                quaternion.Y = (matrix.M31 - matrix.M13) * num3;
+                quaternion.Z = (matrix.M12 - matrix.M21) * num3;
+            }
+            else if ((double)matrix.M11 >= (double)matrix.M22 && (double)matrix.M11 >= (double)matrix.M33)
+            {
+                float num2 = (float)Math.Sqrt(1.0 + (double)matrix.M11 - (double)matrix.M22 - (double)matrix.M33);
+                float num3 = 0.5f / num2;
+                quaternion.X = 0.5f * num2;
+                quaternion.Y = (matrix.M12 + matrix.M21) * num3;
+                quaternion.Z = (matrix.M13 + matrix.M31) * num3;
+                quaternion.W = (matrix.M23 - matrix.M32) * num3;
+            }
+            else if ((double)matrix.M22 > (double)matrix.M33)
+            {
+                float num2 = (float)Math.Sqrt(1.0 + (double)matrix.M22 - (double)matrix.M11 - (double)matrix.M33);
+                float num3 = 0.5f / num2;
+                quaternion.X = (matrix.M21 + matrix.M12) * num3;
+                quaternion.Y = 0.5f * num2;
+                quaternion.Z = (matrix.M32 + matrix.M23) * num3;
+                quaternion.W = (matrix.M31 - matrix.M13) * num3;
+            }
+            else
+            {
+                float num2 = (float)Math.Sqrt(1.0 + (double)matrix.M33 - (double)matrix.M11 - (double)matrix.M22);
+                float num3 = 0.5f / num2;
+                quaternion.X = (matrix.M31 + matrix.M13) * num3;
+                quaternion.Y = (matrix.M32 + matrix.M23) * num3;
+                quaternion.Z = 0.5f * num2;
+                quaternion.W = (matrix.M12 - matrix.M21) * num3;
+            }
+            return quaternion;
+        }
+
+        public static void CreateFromRotationMatrix(ref Matrix3x3 matrix, out Quaternion result)
+        {
+            var m = matrix;
             CreateFromRotationMatrix(ref m, out result);
         }
 

@@ -166,7 +166,6 @@ namespace VRageMath
         /// Gets the array of points that make up the corners of the BoundingBox.
         /// </summary>
         /// <param name="corners">An existing array of at least 8 Vector3 points where the corners of the BoundingBox are written.</param>
-        [Unsharper.UnsharperDisableReflection()]
         public unsafe void GetCornersUnsafe(Vector3D* corners)
         {
             corners[0] = cornerArray[0];
@@ -195,11 +194,11 @@ namespace VRageMath
         /// Determines whether the specified Object is equal to the BoundingFrustumD.
         /// </summary>
         /// <param name="obj">The Object to compare with the current BoundingFrustumD.</param>
-        public override bool Equals(object obj)
+        public override bool Equals(object? obj)
         {
             bool flag = false;
-            BoundingFrustumD BoundingFrustumD = obj as BoundingFrustumD;
-            if (BoundingFrustumD != (BoundingFrustumD)null)
+            BoundingFrustumD? BoundingFrustumD = obj as BoundingFrustumD;
+            if (BoundingFrustumD != null)
                 flag = this.matrix == BoundingFrustumD.matrix;
             return flag;
         }

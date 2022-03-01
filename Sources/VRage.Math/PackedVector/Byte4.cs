@@ -1,5 +1,4 @@
-﻿using System;
-using System.Globalization;
+﻿using System.Globalization;
 
 namespace VRageMath.PackedVector
 {
@@ -15,14 +14,8 @@ namespace VRageMath.PackedVector
         /// </summary>
         public uint PackedValue
         {
-            get
-            {
-                return this.packedValue;
-            }
-            set
-            {
-                this.packedValue = value;
-            }
+            get => packedValue;
+            set => packedValue = value;
         }
 
         /// <summary>
@@ -31,7 +24,7 @@ namespace VRageMath.PackedVector
         /// <param name="x">Initial value for the x component.</param><param name="y">Initial value for the y component.</param><param name="z">Initial value for the z component.</param><param name="w">Initial value for the w component.</param>
         public Byte4(float x, float y, float z, float w)
         {
-            this.packedValue = Byte4.PackHelper(x, y, z, w);
+            packedValue = PackHelper(x, y, z, w);
         }
 
         /// <summary>
@@ -40,7 +33,7 @@ namespace VRageMath.PackedVector
         /// <param name="vector">A vector containing the initial values for the components of the Byte4 structure.</param>
         public Byte4(Vector4 vector)
         {
-            this.packedValue = Byte4.PackHelper(vector.X, vector.Y, vector.Z, vector.W);
+            packedValue = PackHelper(vector.X, vector.Y, vector.Z, vector.W);
         }
 
         public Byte4(uint packedValue)
@@ -68,7 +61,7 @@ namespace VRageMath.PackedVector
 
         void IPackedVector.PackFromVector4(Vector4 vector)
         {
-            this.packedValue = Byte4.PackHelper(vector.X, vector.Y, vector.Z, vector.W);
+            packedValue = PackHelper(vector.X, vector.Y, vector.Z, vector.W);
         }
 
         private static uint PackHelper(float vectorX, float vectorY, float vectorZ, float vectorW)
@@ -82,20 +75,20 @@ namespace VRageMath.PackedVector
         public Vector4 ToVector4()
         {
             Vector4 vector4;
-            vector4.X = (float)(this.packedValue & (uint)byte.MaxValue);
-            vector4.Y = (float)(this.packedValue >> 8 & (uint)byte.MaxValue);
-            vector4.Z = (float)(this.packedValue >> 16 & (uint)byte.MaxValue);
-            vector4.W = (float)(this.packedValue >> 24 & (uint)byte.MaxValue);
+            vector4.X = packedValue & byte.MaxValue;
+            vector4.Y = packedValue >> 8 & byte.MaxValue;
+            vector4.Z = packedValue >> 16 & byte.MaxValue;
+            vector4.W = packedValue >> 24 & byte.MaxValue;
             return vector4;
         }
 
         public Vector4UByte ToVector4UByte()
         {
             Vector4UByte vector4;
-            vector4.X = (byte)(this.packedValue & (uint)byte.MaxValue);
-            vector4.Y = (byte)(this.packedValue >> 8 & (uint)byte.MaxValue);
-            vector4.Z = (byte)(this.packedValue >> 16 & (uint)byte.MaxValue);
-            vector4.W = (byte)(this.packedValue >> 24 & (uint)byte.MaxValue);
+            vector4.X = (byte)(packedValue & byte.MaxValue);
+            vector4.Y = (byte)(packedValue >> 8 & byte.MaxValue);
+            vector4.Z = (byte)(packedValue >> 16 & byte.MaxValue);
+            vector4.W = (byte)(packedValue >> 24 & byte.MaxValue);
             return vector4;
         }
 
@@ -104,7 +97,7 @@ namespace VRageMath.PackedVector
         /// </summary>
         public override string ToString()
         {
-            return this.packedValue.ToString("X8", (IFormatProvider)CultureInfo.InvariantCulture);
+            return packedValue.ToString("X8", CultureInfo.InvariantCulture);
         }
 
         /// <summary>
@@ -112,17 +105,17 @@ namespace VRageMath.PackedVector
         /// </summary>
         public override int GetHashCode()
         {
-            return this.packedValue.GetHashCode();
+            return packedValue.GetHashCode();
         }
 
         /// <summary>
         /// Returns a value that indicates whether the current instance is equal to a specified object.
         /// </summary>
         /// <param name="obj">The object with which to make the comparison.</param>
-        public override bool Equals(object obj)
+        public override bool Equals(object? obj)
         {
             if (obj is Byte4)
-                return this.Equals((Byte4)obj);
+                return Equals((Byte4)obj);
             else
                 return false;
         }
@@ -133,7 +126,7 @@ namespace VRageMath.PackedVector
         /// <param name="other">The object with which to make the comparison.</param>
         public bool Equals(Byte4 other)
         {
-            return this.packedValue.Equals(other.packedValue);
+            return packedValue.Equals(other.packedValue);
         }
     }
 }

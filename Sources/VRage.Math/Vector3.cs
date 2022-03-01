@@ -17,7 +17,6 @@ namespace VRageMath
     /// Defines a vector with three components.
     /// </summary>
     [ProtoBuf.ProtoContract, Serializable]
-    [Unsharper.UnsharperDisableReflection()]
 #if !XB1 // XB1_SYNC_SERIALIZER_NOEMIT
     public struct Vector3 : IEquatable<Vector3>
 #else // XB1
@@ -45,17 +44,17 @@ namespace VRageMath
         /// <summary>
         /// Gets or sets the x-component of the vector.
         /// </summary>
-        [ProtoBuf.ProtoMember]
+        [ProtoBuf.ProtoMember(1)]
         public float X;
         /// <summary>
         /// Gets or sets the y-component of the vector.
         /// </summary>
-        [ProtoBuf.ProtoMember]
+        [ProtoBuf.ProtoMember(4)]
         public float Y;
         /// <summary>
         /// Gets or sets the z-component of the vector.
         /// </summary>
-        [ProtoBuf.ProtoMember]
+        [ProtoBuf.ProtoMember(7)]
         public float Z;
 
 
@@ -419,7 +418,7 @@ namespace VRageMath
         /// Returns a value that indicates whether the current instance is equal to a specified object.
         /// </summary>
         /// <param name="obj">Object to make the comparison with.</param>
-        public override bool Equals(object obj)
+        public override bool Equals(object? obj)
         {
             bool flag = false;
             if (obj is Vector3)

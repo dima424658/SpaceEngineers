@@ -1,5 +1,4 @@
-﻿
-namespace VRageMath.PackedVector
+﻿namespace VRageMath.PackedVector
 {
     /// <summary>
     /// Interface that converts packed vector types to and from Vector4 values, allowing multiple encodings to be manipulated in a generic way.

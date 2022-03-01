@@ -173,7 +173,7 @@ namespace VRageMath
         /// Returns a value that indicates whether the current instance is equal to a specified object.
         /// </summary>
         /// <param name="obj">Object with which to make the comparison.</param>
-        public override bool Equals(object obj)
+        public override bool Equals(object? obj)
         {
             return this.Equals(obj as CurveKey);
         }

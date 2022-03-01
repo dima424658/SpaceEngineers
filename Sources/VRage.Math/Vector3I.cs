@@ -108,11 +108,11 @@ namespace VRageMath
         public static Vector3I Forward = new Vector3I(0, 0, -1);
         public static Vector3I Backward = new Vector3I(0, 0, 1);
 
-        [ProtoBuf.ProtoMember]
+        [ProtoBuf.ProtoMember(1)]
         public int X;
-        [ProtoBuf.ProtoMember]
+        [ProtoBuf.ProtoMember(4)]
         public int Y;
-        [ProtoBuf.ProtoMember]
+        [ProtoBuf.ProtoMember(7)]
         public int Z;
 
         public Vector3I(int xyz)

@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
 using System.Text;
+using VRage.Library.Collections;
 
 namespace VRageMath.Spatial
 {
@@ -153,7 +154,7 @@ namespace VRageMath.Spatial
 
         private int m_count;
 
-        List<Entry> m_storage;
+        MyList<MyVector3DGrid<T>.Entry> m_storage;
         Dictionary<Vector3I, int> m_bins;
 
         public int Count { get { return m_count; } }
@@ -163,7 +164,7 @@ namespace VRageMath.Spatial
             m_cellSize = cellSize;
             m_divisor = 1.0f / m_cellSize;
 
-            m_storage = new List<Entry>();
+            m_storage = new MyList<MyVector3DGrid<T>.Entry>();
             m_bins = new Dictionary<Vector3I, int>();
 
             Clear();

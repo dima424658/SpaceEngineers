@@ -1,9 +1,4 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using VRage.Collections;
-using VRage.Library.Collections;
+﻿using VRage.Collections;
 
 namespace VRageMath.Spatial
 {

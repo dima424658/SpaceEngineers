@@ -1,8 +1,4 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using VRageMath;
+﻿using VRageMath;
 
 namespace Havok
 {
@@ -15,12 +11,12 @@ namespace Havok
     public interface IPhysicsMesh
     {
         void SetAABB(Vector3 min, Vector3 max);
-        void AddSectionData(int indexStart, int triCount, String materialName);
+        void AddSectionData(int indexStart, int triCount, string materialName);
         void AddIndex(int index);
         void AddVertex(Vector3 position, Vector3 normal, Vector3 tangent, Vector2 texCoord);
 
         int GetSectionsCount();
-        bool GetSectionData(int idx, ref int indexStart, ref int triCount, ref String matIdx);
+        bool GetSectionData(int idx, ref int indexStart, ref int triCount, ref string matIdx);
 
         int GetIndicesCount();
         int GetIndex(int idx);

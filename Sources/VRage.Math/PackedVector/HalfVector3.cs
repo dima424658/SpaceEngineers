@@ -44,7 +44,7 @@ namespace VRageMath.PackedVector
         public HalfVector4 ToHalfVector4()
         {
             HalfVector4 v4;
-            v4.PackedValue = ((ulong)X) | ((ulong)Y << 16) | ((ulong)Z << 32);
+            v4.PackedValue = (X) | ((ulong)Y << 16) | ((ulong)Z << 32);
             return v4;
         }
 
@@ -63,7 +63,7 @@ namespace VRageMath.PackedVector
         /// </summary>
         public override string ToString()
         {
-            return this.ToVector3().ToString();
+            return ToVector3().ToString();
         }
     }
 }

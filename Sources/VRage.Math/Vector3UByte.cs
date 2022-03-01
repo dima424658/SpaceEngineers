@@ -34,11 +34,11 @@ namespace VRageMath
 
         public static Vector3UByte Zero = new Vector3UByte(0, 0, 0);
 
-        [ProtoBuf.ProtoMember]
+        [ProtoBuf.ProtoMember(1)]
         public byte X;
-        [ProtoBuf.ProtoMember]
+        [ProtoBuf.ProtoMember(4)]
         public byte Y;
-        [ProtoBuf.ProtoMember]
+        [ProtoBuf.ProtoMember(7)]
         public byte Z;
 
         public Vector3UByte(byte x, byte y, byte z)

@@ -104,7 +104,7 @@ namespace VRageMath.PackedVector
         /// Returns a value that indicates whether the current instance is equal to a specified object.
         /// </summary>
         /// <param name="obj">The object with which to make the comparison.</param>
-        public override bool Equals(object obj)
+        public override bool Equals(object? obj)
         {
             if (obj is NormalizedByte4)
                 return this.Equals((NormalizedByte4)obj);

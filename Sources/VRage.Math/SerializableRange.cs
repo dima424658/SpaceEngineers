@@ -7,10 +7,10 @@ namespace VRageMath
     [ProtoContract]
     public struct SerializableRange
     {
-        [ProtoMember]
+        [ProtoMember(1)]
         [XmlAttribute(AttributeName = "Min")]
         public float Min;
-        [ProtoMember]
+        [ProtoMember(4)]
         [XmlAttribute(AttributeName = "Max")]
         public float Max;
 

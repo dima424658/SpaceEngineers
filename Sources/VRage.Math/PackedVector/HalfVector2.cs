@@ -1,6 +1,4 @@
-﻿using System;
-
-namespace VRageMath.PackedVector
+﻿namespace VRageMath.PackedVector
 {
     /// <summary>
     /// Packed vector type containing two 16-bit floating-point values.
@@ -14,14 +12,8 @@ namespace VRageMath.PackedVector
         /// </summary>
         public uint PackedValue
         {
-            get
-            {
-                return this.packedValue;
-            }
-            set
-            {
-                this.packedValue = value;
-            }
+            get => packedValue;
+            set => packedValue = value;
         }
 
         /// <summary>
@@ -30,7 +22,7 @@ namespace VRageMath.PackedVector
         /// <param name="x">Initial value for the x component.</param><param name="y">Initial value for the y component.</param>
         public HalfVector2(float x, float y)
         {
-            this.packedValue = HalfVector2.PackHelper(x, y);
+            packedValue = PackHelper(x, y);
         }
 
         /// <summary>
@@ -39,7 +31,7 @@ namespace VRageMath.PackedVector
         /// <param name="vector">A vector containing the initial values for the components of the HalfVector2 structure.</param>
         public HalfVector2(Vector2 vector)
         {
-            this.packedValue = HalfVector2.PackHelper(vector.X, vector.Y);
+            packedValue = PackHelper(vector.X, vector.Y);
         }
 
         /// <summary>
@@ -62,7 +54,7 @@ namespace VRageMath.PackedVector
 
         void IPackedVector.PackFromVector4(Vector4 vector)
         {
-            this.packedValue = HalfVector2.PackHelper(vector.X, vector.Y);
+            packedValue = PackHelper(vector.X, vector.Y);
         }
 
         private static uint PackHelper(float vectorX, float vectorY)
@@ -76,14 +68,14 @@ namespace VRageMath.PackedVector
         public Vector2 ToVector2()
         {
             Vector2 vector2;
-            vector2.X = HalfUtils.Unpack((ushort)this.packedValue);
-            vector2.Y = HalfUtils.Unpack((ushort)(this.packedValue >> 16));
+            vector2.X = HalfUtils.Unpack((ushort)packedValue);
+            vector2.Y = HalfUtils.Unpack((ushort)(packedValue >> 16));
             return vector2;
         }
 
         Vector4 IPackedVector.ToVector4()
         {
-            Vector2 vector2 = this.ToVector2();
+            Vector2 vector2 = ToVector2();
             return new Vector4(vector2.X, vector2.Y, 0.0f, 1f);
         }
 
@@ -92,7 +84,7 @@ namespace VRageMath.PackedVector
         /// </summary>
         public override string ToString()
         {
-            return this.ToVector2().ToString();
+            return ToVector2().ToString();
         }
 
         /// <summary>
@@ -100,17 +92,17 @@ namespace VRageMath.PackedVector
         /// </summary>
         public override int GetHashCode()
         {
-            return this.packedValue.GetHashCode();
+            return packedValue.GetHashCode();
         }
 
         /// <summary>
         /// Returns a value that indicates whether the current instance is equal to a specified object.
         /// </summary>
         /// <param name="obj">The object with which to make the comparison.</param>
-        public override bool Equals(object obj)
+        public override bool Equals(object? obj)
         {
             if (obj is HalfVector2)
-                return this.Equals((HalfVector2)obj);
+                return Equals((HalfVector2)obj);
             else
                 return false;
         }
@@ -121,7 +113,7 @@ namespace VRageMath.PackedVector
         /// <param name="other">The object with which to make the comparison.</param>
         public bool Equals(HalfVector2 other)
         {
-            return this.packedValue.Equals(other.packedValue);
+            return packedValue.Equals(other.packedValue);
         }
     }
 }

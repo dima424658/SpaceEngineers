@@ -1,11 +1,6 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using VRage.Library.Collections;
+﻿using VRage.Library.Collections;
 using VRageMath;
 using VRageMath.PackedVector;
-using System.Diagnostics;
 
 namespace System
 {

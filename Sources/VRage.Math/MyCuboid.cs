@@ -1,10 +1,4 @@
-﻿using System;
-using System.Collections.Generic;
-using VRage;
-using VRageMath;
-
-
-namespace VRageMath
+﻿namespace VRageMath
 {
     //  6 - 7  
     // /   /|

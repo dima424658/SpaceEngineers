@@ -5,7 +5,7 @@ namespace VRageMath.PackedVector
     /// <summary>
     /// Packed vector type containing four 16-bit floating-point values.
     /// </summary>
-	[Unsharper.UnsharperDisableReflection()]
+	[Serializable]
 	public struct HalfVector4 : IPackedVector<ulong>, IPackedVector, IEquatable<HalfVector4>
     {
         public ulong PackedValue;
@@ -22,7 +22,7 @@ namespace VRageMath.PackedVector
         /// <param name="x">Initial value for the x component.</param><param name="y">Initial value for the y component.</param><param name="z">Initial value for the z component.</param><param name="w">Initial value for the w component.</param>
         public HalfVector4(float x, float y, float z, float w)
         {
-            this.PackedValue = HalfVector4.PackHelper(x, y, z, w);
+            PackedValue = HalfVector4.PackHelper(x, y, z, w);
         }
 
         /// <summary>
@@ -31,12 +31,12 @@ namespace VRageMath.PackedVector
         /// <param name="vector">A vector containing the initial values for the components of the HalfVector4 structure.</param>
         public HalfVector4(Vector4 vector)
         {
-            this.PackedValue = HalfVector4.PackHelper(vector.X, vector.Y, vector.Z, vector.W);
+            PackedValue = HalfVector4.PackHelper(vector.X, vector.Y, vector.Z, vector.W);
         }
 
         public HalfVector4(HalfVector3 vector3, ushort w)
         {
-            this.PackedValue = vector3.ToHalfVector4().PackedValue | (ulong) w << 48;
+            PackedValue = vector3.ToHalfVector4().PackedValue | (ulong) w << 48;
         }
 
         /// <summary>
@@ -59,7 +59,7 @@ namespace VRageMath.PackedVector
 
         void IPackedVector.PackFromVector4(Vector4 vector)
         {
-            this.PackedValue = HalfVector4.PackHelper(vector.X, vector.Y, vector.Z, vector.W);
+            PackedValue = HalfVector4.PackHelper(vector.X, vector.Y, vector.Z, vector.W);
         }
 
         private static ulong PackHelper(float vectorX, float vectorY, float vectorZ, float vectorW)
@@ -73,10 +73,10 @@ namespace VRageMath.PackedVector
         public Vector4 ToVector4()
         {
             Vector4 vector4;
-            vector4.X = HalfUtils.Unpack((ushort)this.PackedValue);
-            vector4.Y = HalfUtils.Unpack((ushort)(this.PackedValue >> 16));
-            vector4.Z = HalfUtils.Unpack((ushort)(this.PackedValue >> 32));
-            vector4.W = HalfUtils.Unpack((ushort)(this.PackedValue >> 48));
+            vector4.X = HalfUtils.Unpack((ushort)PackedValue);
+            vector4.Y = HalfUtils.Unpack((ushort)(PackedValue >> 16));
+            vector4.Z = HalfUtils.Unpack((ushort)(PackedValue >> 32));
+            vector4.W = HalfUtils.Unpack((ushort)(PackedValue >> 48));
             return vector4;
         }
 
@@ -85,7 +85,7 @@ namespace VRageMath.PackedVector
         /// </summary>
         public override string ToString()
         {
-            return this.ToVector4().ToString();
+            return ToVector4().ToString();
         }
 
         /// <summary>
@@ -93,17 +93,17 @@ namespace VRageMath.PackedVector
         /// </summary>
         public override int GetHashCode()
         {
-            return this.PackedValue.GetHashCode();
+            return PackedValue.GetHashCode();
         }
 
         /// <summary>
         /// Returns a value that indicates whether the current instance is equal to a specified object.
         /// </summary>
         /// <param name="obj">The object with which to make the comparison.</param>
-        public override bool Equals(object obj)
+        public override bool Equals(object? obj)
         {
             if (obj is HalfVector4)
-                return this.Equals((HalfVector4)obj);
+                return Equals((HalfVector4)obj);
             else
                 return false;
         }
@@ -114,7 +114,7 @@ namespace VRageMath.PackedVector
         /// <param name="other">The object with which to make the comparison.</param>
         public bool Equals(HalfVector4 other)
         {
-            return this.PackedValue.Equals(other.PackedValue);
+            return PackedValue.Equals(other.PackedValue);
         }
     }
 }
