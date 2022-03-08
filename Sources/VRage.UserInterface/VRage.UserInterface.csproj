@@ -4,6 +4,31 @@
     <TargetFramework>net6.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <PlatformTarget>x64</PlatformTarget>
   </PropertyGroup>
+
+  <ItemGroup>
+    <Reference Include="EmptyKeys.UserInterface">
+      <HintPath>..\3rdParty\EmptyKeys\EmptyKeys.UserInterface.dll</HintPath>
+    </Reference>
+    <Reference Include="EmptyKeys.UserInterface.Core">
+      <HintPath>..\3rdParty\EmptyKeys\EmptyKeys.UserInterface.Core.dll</HintPath>
+    </Reference>
+    <Reference Include="EmptyKeys.UserInterface.Debug">
+      <HintPath>..\3rdParty\EmptyKeys\EmptyKeys.UserInterface.Debug.dll</HintPath>
+    </Reference>
+    <Reference Include="VRage">
+      <HintPath>..\..\..\..\Desktop\SpaceEngineersDlls\VRage.dll</HintPath>
+    </Reference>
+    <Reference Include="VRage.Input">
+      <HintPath>..\..\..\..\Desktop\SpaceEngineersDlls\VRage.Input.dll</HintPath>
+    </Reference>
+    <Reference Include="VRage.Math">
+      <HintPath>..\..\..\..\Desktop\SpaceEngineersDlls\VRage.Math.dll</HintPath>
+    </Reference>
+    <Reference Include="VRage.Render">
+      <HintPath>..\..\..\..\Desktop\SpaceEngineersDlls\VRage.Render.dll</HintPath>
+    </Reference>
+  </ItemGroup>
 
 </Project>

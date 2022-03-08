@@ -12,7 +12,7 @@ namespace VRage.UserInterface
 
         public override FontBase LoadFont(object contentManager, string file)
         {
-            FontBase fontBase;
+            FontBase? fontBase;
             if (!Fonts.TryGetValue(file, out fontBase))
                 throw new KeyNotFoundException("Font not found - " + file);
 
@@ -23,7 +23,7 @@ namespace VRage.UserInterface
 
         public override TextureBase LoadTexture(object contentManager, string file) => Engine.Instance.Renderer.CreateTexture(file);
 
-        public override EffectBase LoadEffect(object contentManager, string file) => null;
+        public override EffectBase? LoadEffect(object contentManager, string file) => null;
 
         public void UnloadGeneratedTextures() => GeneratedTextures.Clear();
     }

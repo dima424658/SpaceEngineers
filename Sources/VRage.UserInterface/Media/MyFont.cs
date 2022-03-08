@@ -14,16 +14,16 @@ namespace VRage.UserInterface.Media
 
         public override char? DefaultCharacter => new char?(' ');
 
-        public override object GetNativeFont() => (object)m_fontIndex;
+        public override object GetNativeFont() => m_fontIndex;
 
-        public override int LineSpacing => m_font.LineHeight;
+        public override int LineSpacing => m_font != null ? m_font.LineHeight : 0;
 
         public override FontEffectType EffectType => FontEffectType.None;
 
         public override float Spacing
         {
-            get => m_font.Spacing;
-            set => m_font.Spacing = (int)value;
+            get => m_font != null ? m_font.Spacing : 0;
+            set { if (m_font != null) m_font.Spacing = (int)value; }
         }
 
         public float Scale { get; set; }
@@ -38,14 +38,24 @@ namespace VRage.UserInterface.Media
 
         public override Size MeasureString(StringBuilder text, float dpiScaleX, float dpiScaleY)
         {
-            Vector2 result = m_font.MeasureString(text, (float)(GlobalFontScale * Scale * (1.0f / dpiScaleX)));
-            return new Size(result.X, result.Y);
+            if (m_font != null)
+            {
+                Vector2 result = m_font.MeasureString(text, (float)(GlobalFontScale * Scale * (1.0f / dpiScaleX)));
+                return new Size(result.X, result.Y);
+            }
+            else
+                return new Size(0, 0);
         }
 
         public override Size MeasureString(string text, float dpiScaleX, float dpiScaleY)
         {
-            Vector2 result = m_font.MeasureString(text, (float)(GlobalFontScale * Scale * (1.0f / dpiScaleX)));
-            return new Size(result.X, result.Y);
+            if (m_font != null)
+            {
+                Vector2 result = m_font.MeasureString(text, (float)(GlobalFontScale * Scale * (1.0f / dpiScaleX)));
+                return new Size(result.X, result.Y);
+            }
+            else
+                return new Size(0, 0);
         }
     }
 }

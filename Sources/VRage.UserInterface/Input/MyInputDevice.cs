@@ -20,7 +20,7 @@ namespace VRage.UserInterface.Input
 
         public override TouchStateBase TouchState => m_touchState;
 
-        public void ShowVirtualKeyboard(Action<string> onSuccess, Action onCancel = null, string defaultText = null, string title = null, int maxLength = 0)
+        public void ShowVirtualKeyboard(Action<string> onSuccess, Action? onCancel = null, string? defaultText = null, string? title = null, int maxLength = 0)
         {
             m_onSuccess = onSuccess;
             MyVRage.Platform.Input2.ShowVirtualKeyboardIfNeeded(new Action<string>(OnVirtualKeyboardDataReceived), defaultText: defaultText, maxLength: maxLength);
@@ -30,7 +30,7 @@ namespace VRage.UserInterface.Input
 
         public void Update()
         {
-            Action result;
+            Action? result;
             while (m_invoke.TryDequeue(out result))
                 result();
         }

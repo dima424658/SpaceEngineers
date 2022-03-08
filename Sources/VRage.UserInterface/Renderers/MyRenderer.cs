@@ -44,9 +44,9 @@ namespace VRage.UserInterface.Renderers
             return new MyTexture(width, height);
         }
 
-        public override EffectBase CreateEffect(object nativeEffect) => null;
+        public override EffectBase? CreateEffect(object nativeEffect) => null;
 
-        public override EffectBase GetSDFFontEffect() => null;
+        public override EffectBase? GetSDFFontEffect() => null;
 
         public override TextureBase CreateTexture(object nativeTexture) => new MyTexture((string)nativeTexture);
 
